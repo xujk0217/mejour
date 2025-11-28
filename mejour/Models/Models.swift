@@ -38,6 +38,33 @@ enum PlaceType: String, Codable, CaseIterable, Identifiable {
 
 enum PlaceOrigin: String, Codable { case user, apple }
 
+// AuthResponse.swift
+struct AuthResponse: Codable {
+    let refresh: String
+    let access: String
+}
+
+// MeUser.swift
+struct MeUser: Codable, Identifiable {
+    let id: Int
+    let uuid: String
+    let username: String
+    let email: String
+    let displayName: String
+    let avatar: String?
+    let profileVisibility: String
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case uuid
+        case username
+        case email
+        case displayName = "display_name"
+        case avatar
+        case profileVisibility = "profile_visibility"
+    }
+}
+
 
 struct Place: Identifiable, Codable, Hashable {
     let id: UUID

@@ -14,11 +14,14 @@ enum ActiveSheet: Identifiable, Equatable {
     case place(Place)
     case addLog
     case nearby
+    case profile // 個人頁面
+    
     var id: String {
         switch self {
         case .place(let p): return "place-\(p.id)"
         case .addLog:       return "addLog"
         case .nearby:       return "nearby"
+        case .profile:      return "profile" // 個人頁面
         }
     }
 }
@@ -58,15 +61,17 @@ struct RootMapView: View {
             case .nearby:
                 NearbySheet(
                     vm: vm,
-                    baseCoord: vm.cameraCenter ?? vm.userCoordinate,   // ← 以地圖中心為準，退而求其次用我的定位
+                    baseCoord: vm.cameraCenter ?? vm.userCoordinate,   // 以地圖中心為準，退而求其次用我的定位
                     source: vm.scope == .mine ? .mine : .community,
                     tagFilter: $tagFilter
                 ) { picked in
-                    vm.setCamera(to: picked.coordinate.cl, animated: true)   // ③ 會有滑動動畫（下節説明）
+                    vm.setCamera(to: picked.coordinate.cl, animated: true)   // 滑動動畫
                     activeSheet = .place(picked)
                 }
                 .presentationDetents(Set([.medium, .large]))
-
+            case .profile: // 個人頁面
+                    ProfileSheetView()
+                        .presentationDetents(Set([.medium, .large]))
             }
         }
         .onChange(of: selectedTab) { newValue in
@@ -101,11 +106,17 @@ struct RootMapView: View {
                 vm.cameraCenter = ctx.region.center
             }
 
-            // 右上角兩顆圓形浮動鈕（回定位／附近列表）
+            // 右上角圓形浮動鈕（回定位／附近列表）
             VStack(spacing: 10) {
+                // 個人資訊
+                Button {
+                    activeSheet = .profile
+                } label: {
+                    CircleButtonIcon(systemName: "person.circle")
+                }
                 Button {
                     if let me = vm.userCoordinate {
-                        vm.setCamera(to: me, animated: true)   // ← 會滑動回去
+                        vm.setCamera(to: me, animated: true)   // 會滑動回去
                     } else {
                         vm.cameraPosition = .userLocation(fallback: .automatic) // 初次定位 fallback
                     }
