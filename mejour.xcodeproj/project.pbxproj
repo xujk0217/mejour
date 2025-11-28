@@ -256,6 +256,9 @@
 				DEVELOPMENT_TEAM = T593T3727N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用相機來拍照並建立地圖日誌。";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "需要存取您的定位來新增地圖日誌與顯示附近的公開地點。";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "需要存取您的相簿以讀取照片與其位置（EXIF）。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -284,6 +287,9 @@
 				DEVELOPMENT_TEAM = T593T3727N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用相機來拍照並建立地圖日誌。";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "需要存取您的定位來新增地圖日誌與顯示附近的公開地點。";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "需要存取您的相簿以讀取照片與其位置（EXIF）。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
