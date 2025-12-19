@@ -10,8 +10,11 @@ import SwiftUI
 struct PlaceSheetView: View {
     let place: Place
     @EnvironmentObject private var vm: MapViewModel
-    @State private var logs: [LogItem] = []
     @State private var showEdit = false
+    
+    private var logs: [LogItem] {
+        vm.logsByPlace[place.serverId] ?? []
+    }
 
     var body: some View {
         NavigationStack {
@@ -36,7 +39,7 @@ struct PlaceSheetView: View {
         .navigationTitle("地點資訊")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            logs = vm.logsByPlace[place.id] ?? []
+            await vm.loadPosts(for: place)
         }
     }
 
@@ -100,31 +103,86 @@ struct PlaceSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(log.title).font(.headline)
             Text("by \(log.authorName)").font(.caption).foregroundStyle(.secondary)
-            if !log.photos.isEmpty {
-                TabView {
-                    ForEach(log.photos) { p in
-                        if let ui = UIImage(data: p.data) {
-                            Image(uiImage: ui)
-                                .resizable().scaledToFill()
-                                .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 300)
-                                .clipped()
-                        }
-                    }
-                }
-                .tabViewStyle(.page)
-                .frame(height: 260)
-            }
-            Text(log.content).lineLimit(3).foregroundStyle(.secondary)
+
+            logPhotoPreview(log)
+
+            Text(log.content)
+                .lineLimit(3)
+                .foregroundStyle(.secondary)
 
             HStack {
-                Button { /* like */ } label: { Label("\(log.likeCount)", systemImage: "hand.thumbsup") }
-                    .platformButtonStyle()
-                NavigationLink { LogDetailView(log: log) } label: { Label("查看全文", systemImage: "chevron.right") }
-                    .platformButtonStyle()
+                Button { /* like */ } label: {
+                    Label("\(log.likeCount)", systemImage: "hand.thumbsup")
+                }
+                .platformButtonStyle()
+
+                NavigationLink {
+                    LogDetailView(postId: log.serverId)
+                } label: {
+                    Label("查看全文", systemImage: "chevron.right")
+                }
+                .platformButtonStyle()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    @ViewBuilder
+    private func logPhotoPreview(_ log: LogItem) -> some View {
+        // 1) 後端 URL：photo
+        if let urlString = log.photoURL, let url = URL(string: urlString) {
+            AsyncImage(url: url, transaction: .init(animation: .easeInOut)) { phase in
+                switch phase {
+                case .empty:
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.thinMaterial)
+                        .frame(height: 260)
+                        .overlay(ProgressView())
+
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 300)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                case .failure:
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.thinMaterial)
+                        .frame(height: 260)
+                        .overlay(
+                            VStack(spacing: 8) {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 24, weight: .semibold))
+                                Text("照片載入失敗")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        )
+
+                @unknown default:
+                    EmptyView()
+                }
+            }
+        }
+        else {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.thinMaterial)
+                .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 220)
+                .overlay(
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text("沒有附上照片")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                )
+        }
+    }
+
 }
 
 // MARK: - Local ChipsGrid for header
@@ -174,4 +232,3 @@ extension View {
         }
     }
 }
-

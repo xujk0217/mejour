@@ -19,6 +19,7 @@ struct CustomTwoTabBar: View {
     @Binding var selection: MapScope
     private let items: [TwoTabItem] = [
         .init(title: "個人", systemImage: "person.crop.circle", scope: .mine),
+        .init(title: "朋友", systemImage: "person.2", scope: .community),
         .init(title: "社群", systemImage: "person.3", scope: .community)
     ]
 

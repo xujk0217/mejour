@@ -27,7 +27,7 @@ enum ActiveSheet: Identifiable, Equatable {
 }
 
 // MARK: - RootMapView
-private enum MapTab: Int { case mine = 0, community = 1 }
+private enum MapTab: Int { case mine = 0, friends = 1, everyone = 2 }
 
 struct RootMapView: View {
     @StateObject private var vm = MapViewModel()
@@ -39,15 +39,20 @@ struct RootMapView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            // Tab 1: 我的
+            // Tab 1: 個人
             mapContent(scope: .mine)
-                .tabItem { Label("我的", systemImage: "person.crop.circle") }
+                .tabItem { Label("個人", systemImage: "person.crop.circle") }
                 .tag(MapTab.mine.rawValue)
 
-            // Tab 2: 社群
+            // Tab 2: 朋友（目前行為與社群相同）
+            mapContent(scope: .community)
+                .tabItem { Label("朋友", systemImage: "person.2") }
+                .tag(MapTab.friends.rawValue)
+
+            // Tab 3: 社群（目前行為與社群相同）
             mapContent(scope: .community)
                 .tabItem { Label("社群", systemImage: "person.3") }
-                .tag(MapTab.community.rawValue)
+                .tag(MapTab.everyone.rawValue)
         }
         .sheet(item: $activeSheet) { which in
             switch which {
@@ -86,7 +91,16 @@ struct RootMapView: View {
     // MARK: - 地圖內容（兩個 Tab 共用，同一份 UI，只換 scope）
     private func mapContent(scope: MapScope) -> some View {
         ZStack(alignment: .bottom) {
-            Map(position: $vm.cameraPosition, selection: $vm.selectedPlace) {
+            if vm.isLoadingPlaces {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("載入地點中…")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.thickMaterial)
+            } else {
+                Map(position: $vm.cameraPosition, selection: $vm.selectedPlace) {
                 if let me = vm.userCoordinate {
                     Annotation("me", coordinate: me) {
                         MyUserPuck(heading: vm.userHeading?.trueHeading)
@@ -105,49 +119,53 @@ struct RootMapView: View {
             .onMapCameraChange { ctx in
                 vm.cameraCenter = ctx.region.center
             }
+            }
 
-            // 右上角圓形浮動鈕（回定位／附近列表）
-            VStack(spacing: 10) {
-                // 個人資訊
-                Button {
-                    activeSheet = .profile
-                } label: {
-                    CircleButtonIcon(systemName: "person.circle")
-                }
-                Button {
-                    if let me = vm.userCoordinate {
-                        vm.setCamera(to: me, animated: true)   // 會滑動回去
-                    } else {
-                        vm.cameraPosition = .userLocation(fallback: .automatic) // 初次定位 fallback
+            if !vm.isLoadingPlaces {
+                // 右上角圓形浮動鈕（回定位／附近列表）
+                VStack(spacing: 10) {
+                    // 個人資訊
+                    Button {
+                        activeSheet = .profile
+                    } label: {
+                        CircleButtonIcon(systemName: "person.circle")
                     }
-                } label: { CircleButtonIcon(systemName: "location.fill") }
+                    Button {
+                        if let me = vm.userCoordinate {
+                            vm.setCamera(to: me, animated: true)   // 會滑動回去
+                        } else {
+                            vm.cameraPosition = .userLocation(fallback: .automatic) // 初次定位 fallback
+                        }
+                    } label: { CircleButtonIcon(systemName: "location.fill") }
 
-                Button { activeSheet = .nearby } label: {
-                    CircleButtonIcon(systemName: "list.bullet")
+                    Button { activeSheet = .nearby } label: {
+                        CircleButtonIcon(systemName: "list.bullet")
+                    }
                 }
-            }
-            .padding(.trailing, 12)
-            .padding(.top, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.trailing, 12)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-            // 右下角「＋」浮動鈕
-            Button {
-                activeSheet = .addLog
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .frame(width: 52, height: 52)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.25)))
-                    .shadow(radius: 10, y: 6)
+                // 右下角「＋」浮動鈕
+                Button {
+                    activeSheet = .addLog
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .bold))
+                        .frame(width: 52, height: 52)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().stroke(.white.opacity(0.25)))
+                        .shadow(radius: 10, y: 6)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.trailing, 16)
-            .padding(.bottom, 16)
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .navigationTitle(scope == .mine ? "我的地圖" : "社群地圖")
+        .navigationTitle(scope == .mine ? "個人地圖" : "社群地圖")
         .navigationBarTitleDisplayMode(.inline)
+        
     }
 }
 
@@ -178,11 +196,18 @@ private struct DeliquifiedGlassBar: View {
             // 左：雙分頁 capsule
             HStack(spacing: 0) {
                 CapsuleTabButton(
-                    title: "我的",
+                    title: "個人",
                     systemImage: "person.crop.circle",
                     isSelected: selection == .mine,
                     ns: ns
                 ) { selection = .mine }
+
+                CapsuleTabButton(
+                    title: "朋友",
+                    systemImage: "person.2",
+                    isSelected: selection == .community,
+                    ns: ns
+                ) { selection = .community }
 
                 CapsuleTabButton(
                     title: "社群",
@@ -332,7 +357,7 @@ private struct CapsuleTabButton: View {
                 Text(title).font(.footnote)
             }
             .foregroundStyle(isSelected ? .primary : .secondary)
-            .frame(width: 96, height: 44)
+            .frame(width: 78, height: 44)
             .background(alignment: .center) {
                 if isSelected {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -396,6 +421,9 @@ struct NearbySheet: View {
     let source: MapViewModel.PlaceSource
     @Binding var tagFilter: String
     var onPick: (Place) -> Void
+    
+    @State private var isLoading = false
+    @State private var loadedPlaces: [Place] = []
 
     var body: some View {
         NavigationStack {
@@ -408,34 +436,48 @@ struct NearbySheet: View {
                 }
                 .padding()
 
-                List {
-                    if let c = baseCoord {
-                        let nearby = vm.nearestPlaces(
-                            from: c,
-                            source: source,                 // ← 依目前分頁（我的/社群）
-                            limit: 50,
-                            tagFilter: tagFilter,
-                            radiusMeters: .greatestFiniteMagnitude
-                        )
-                        ForEach(nearby, id: \.id) { place in
-                            Button { onPick(place) } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: place.type.iconName)
-                                        .foregroundStyle(place.type.color)
-                                    VStack(alignment: .leading) {
-                                        Text(place.name).font(.headline)
-                                        Text(place.tags.joined(separator: " · "))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                if isLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("搜尋附近地點中…")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        if let c = baseCoord {
+                            let nearby = vm.nearestPlaces(
+                                from: c,
+                                source: source,                 // ← 依目前分頁（我的/社群）
+                                limit: 50,
+                                tagFilter: tagFilter,
+                                radiusMeters: .greatestFiniteMagnitude
+                            )
+                            if nearby.isEmpty {
+                                Text("找不到附近地點")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ForEach(nearby, id: \.id) { place in
+                                    Button { onPick(place) } label: {
+                                        HStack(spacing: 12) {
+                                            Image(systemName: place.type.iconName)
+                                                .foregroundStyle(place.type.color)
+                                            VStack(alignment: .leading) {
+                                                Text(place.name).font(.headline)
+                                                Text(place.tags.joined(separator: " · "))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                                        }
+                                        .padding(.vertical, 4)
                                     }
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
                                 }
-                                .padding(.vertical, 4)
                             }
+                        } else {
+                            Text("尚未取得地圖位置").foregroundStyle(.secondary)
                         }
-                    } else {
-                        Text("尚未取得地圖位置").foregroundStyle(.secondary)
                     }
                 }
             }

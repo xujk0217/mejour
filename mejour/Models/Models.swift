@@ -38,13 +38,11 @@ enum PlaceType: String, Codable, CaseIterable, Identifiable {
 
 enum PlaceOrigin: String, Codable { case user, apple }
 
-// AuthResponse.swift
 struct AuthResponse: Codable {
     let refresh: String
     let access: String
 }
 
-// MeUser.swift
 struct MeUser: Codable, Identifiable {
     let id: Int
     let uuid: String
@@ -53,30 +51,31 @@ struct MeUser: Codable, Identifiable {
     let displayName: String
     let avatar: String?
     let profileVisibility: String
-    
+
     enum CodingKeys: String, CodingKey {
-        case id
-        case uuid
-        case username
-        case email
+        case id, uuid, username, email, avatar
         case displayName = "display_name"
-        case avatar
         case profileVisibility = "profile_visibility"
     }
 }
 
-
 struct Place: Identifiable, Codable, Hashable {
+    // local
     let id: UUID
+
+    // server
+    let serverId: Int
+
+    // display
     var name: String
     var type: PlaceType
-    var tags: [String]               // 地點標籤
+    var tags: [String]
     var coordinate: CLCodable
     var isPublic: Bool
     var ownerId: UUID
-    
+
     var origin: PlaceOrigin = .user
-    var applePlaceId: String? = nil   // Apple Maps Server API 的 Place ID
+    var applePlaceId: String? = nil
 }
 
 struct CLCodable: Codable, Hashable, Equatable {
@@ -87,30 +86,92 @@ struct CLCodable: Codable, Hashable, Equatable {
     var cl: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
 }
 
-struct LogPhoto: Identifiable, Hashable, Codable {
-    let id: UUID = UUID()
-    var data: Data                   // 直接存 Data，展示時轉 Image/UIImage
-}
-
-
+/// ✅ 正式版：LogItem 只處理「後端 post」
 struct LogItem: Identifiable, Codable, Hashable {
-    let id: UUID
-    let placeId: UUID
-    let authorId: UUID
-    var authorName: String           // 作者顯示名
+    // server identity
+    let serverId: Int
+    let uuid: String?
+
+    // relations (server ids)
+    let placeServerId: Int
+    let authorServerId: Int
+    let authorUUID: String?   // 可選：debug / 之後要做 profile link 也方便
+
+    // display
+    var authorName: String
     var title: String
     var content: String
-    var photos: [LogPhoto]           // 多張照片
     var isPublic: Bool
     var createdAt: Date
-    var likeCount: Int = 0           // 可加的屬性
-    var commentCount: Int = 0
+    var likeCount: Int
+    var dislikeCount: Int
+    var photoURL: String?
+
+    // SwiftUI identity
+    var id: Int { serverId }
 }
 
 struct CommentItem: Identifiable, Codable, Hashable {
-    let id: UUID
-    let logId: UUID
-    let authorId: UUID
+    // ✅ 建議跟後端一致：用 Int
+    let serverId: Int
+    let postServerId: Int
+    let authorServerId: Int
     var content: String
     var createdAt: Date
+
+    var id: Int { serverId }
+}
+
+// MARK: - Mapping
+
+extension Place {
+    init?(api: APIPlace) {
+        guard
+            let placeUUID = UUID(uuidString: api.uuid),
+            let ownerUUID = UUID(uuidString: api.createdBy.uuid),
+            let lat = Double(api.latitude),
+            let lon = Double(api.longitude)
+        else { return nil }
+
+        let meta = PlaceMetadataCodec.decode(api.metadata)
+        let mappedType: PlaceType = meta?.type ?? .other
+        let mappedTags: [String] = meta?.tags ?? []
+
+        self.id = placeUUID
+        self.serverId = api.id
+
+        self.name = api.name
+        self.type = mappedType
+        self.tags = mappedTags
+        self.coordinate = CLCodable(latitude: lat, longitude: lon)
+        self.isPublic = (api.visibility == .public)
+        self.ownerId = ownerUUID
+        self.origin = .user
+        self.applePlaceId = nil
+    }
+}
+
+extension LogItem {
+    init?(api: APIPost) {
+        // ✅ 正式版：不要因為 uuid 壞掉就整筆丟掉
+        // serverId / place.id / author.id 這些是必要的
+        self.serverId = api.id
+        self.uuid = api.uuid
+
+        self.placeServerId = api.place.id
+        self.authorServerId = api.author.id
+        self.authorUUID = api.author.uuid
+
+        self.authorName = api.author.displayName
+        self.title = api.title
+        self.content = api.body
+        self.photoURL = api.photo
+        self.isPublic = (api.visibility == .public)
+
+        // createdAt 解析
+        self.createdAt = ISO8601DateFormatter().date(from: api.createdAt) ?? .now
+
+        self.likeCount = api.likeCount
+        self.dislikeCount = api.dislikeCount
+    }
 }

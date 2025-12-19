@@ -12,6 +12,8 @@ struct mejourApp: App {
     var body: some Scene {
         WindowGroup {
             RootMapView()
+//            APITestView()  //test API view
+            
         }
     }
 }

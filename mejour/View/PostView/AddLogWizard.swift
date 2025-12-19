@@ -5,6 +5,7 @@
 //  Created by 許君愷 on 2025/10/9.
 //
 
+
 import SwiftUI
 import PhotosUI
 import MapKit
@@ -17,9 +18,9 @@ struct AddLogWizard: View {
     enum Step { case photos, choosePlace, compose }
     @State private var step: Step = .photos
 
-    // Step 1
-    @State private var photoItems: [PhotosPickerItem] = []
-    @State private var photos: [LogPhoto] = []
+    // Step 1 (正式版：只用 1 張)
+    @State private var photoItem: PhotosPickerItem?
+    @State private var photoData: Data?
     @State private var detectedCoord: CLLocationCoordinate2D?
 
     // Step 2
@@ -27,13 +28,16 @@ struct AddLogWizard: View {
     @State private var selectedPlace: Place?
     @State private var creatingNew = false
     @State private var newPlaceName = ""
-    @State private var newPlaceTags: [String] = []        // 改為 chip 陣列
+    @State private var newPlaceTags: [String] = []
     @State private var newPlaceType: PlaceType = .other
 
     // Step 3
     @State private var isPublic = true
     @State private var title = ""
     @State private var content = ""
+
+    @State private var isPublishing = false
+    @State private var publishError: String?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -51,22 +55,25 @@ struct AddLogWizard: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if step != .photos {
                         Button("上一步") { goPrev() }
+                            .disabled(isPublishing)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if step == .compose {
-                        Button("發佈") { publish() }.disabled(!canPublish)
+                        Button(isPublishing ? "發佈中…" : "發佈") {
+                            Task { await publish() }
+                        }
+                        .disabled(!canPublish || isPublishing)
                     } else {
-                        Button("下一步") { goNext() }.disabled(!canNext)
+                        Button("下一步") { goNext() }
+                            .disabled(!canNext || isPublishing)
                     }
                 }
             }
         }
-        .task {
-            await reloadPhotosLocally()
-        }
-        .onChange(of: photoItems) { _ in
-            Task { await reloadPhotosLocally() }
+        .task { await reloadPhotoLocally() }
+        .onChange(of: photoItem) { _ in
+            Task { await reloadPhotoLocally() }
         }
     }
 
@@ -74,31 +81,34 @@ struct AddLogWizard: View {
 
     private var photosStep: some View {
         Form {
-            Section("照片（可多選）") {
-                PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
-                    Label(photos.isEmpty ? "選擇照片" : "重新選擇", systemImage: "photo.on.rectangle")
+            Section("照片（正式版：單張）") {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Label(photoData == nil ? "選擇照片" : "重新選擇", systemImage: "photo")
                 }
-                if !photos.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 10) {
-                            ForEach(photos) { p in
-                                if let ui = UIImage(data: p.data) {
-                                    Image(uiImage: ui)
-                                        .resizable().scaledToFill()
-                                        .frame(width: 90, height: 90)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                }
-                            }
-                        }.padding(.vertical, 6)
-                    }
+
+                if let data = photoData, let ui = UIImage(data: data) {
+                    Image(uiImage: ui)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 240)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.vertical, 6)
+                } else {
+                    Text("尚未選擇照片（可不選，photo 可為空）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+
                 if let c = detectedCoord {
-                    Text("定位來源：\(photos.isEmpty ? "GPS" : "EXIF")  (\(String(format: "%.5f", c.latitude)), \(String(format: "%.5f", c.longitude)))")
+                    Text("定位來源：\(photoData == nil ? "GPS" : "EXIF")  (\(String(format: "%.5f", c.latitude)), \(String(format: "%.5f", c.longitude)))")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("尚未取得定位（稍候或開啟定位權限）").font(.caption).foregroundStyle(.secondary)
+                    Text("尚未取得定位（稍候或開啟定位權限）")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
+
             Section {
                 Button("下一步：選擇地點") { goNext() }
                     .platformButtonStyle()
@@ -108,21 +118,28 @@ struct AddLogWizard: View {
 
     private var choosePlaceStep: some View {
         List {
-            if !creatingNew {
+            if let err = publishError, !err.isEmpty {
                 Section {
-                    Button {
-                        creatingNew = true
-                    } label: { Label("建立新地點", systemImage: "mappin.and.ellipse") }
+                    Text(err).foregroundStyle(.red).font(.caption)
                 }
             }
+
+            if !creatingNew {
+                Section {
+                    Button { creatingNew = true } label: {
+                        Label("建立新地點", systemImage: "mappin.and.ellipse")
+                    }
+                }
+            }
+
             if creatingNew {
                 Section("新地點資訊") {
                     TextField("地點名稱", text: $newPlaceName)
+
                     Picker("類型", selection: $newPlaceType) {
                         ForEach(PlaceType.allCases) { Text($0.rawValue.capitalized).tag($0) }
                     }
 
-                    // 標籤（Chip 輸入 + 預設）
                     TagEditor(
                         title: "標籤",
                         tags: $newPlaceTags,
@@ -161,38 +178,35 @@ struct AddLogWizard: View {
             }
         }
         .onAppear(perform: populateCandidates)
-        .onChange(of: detectedCoord?.latitude ?? .infinity) { _ in
-            populateCandidates()
-        }
-        .onChange(of: detectedCoord?.longitude ?? .infinity) { _ in
-            populateCandidates()
-        }
-
+        .onChange(of: detectedCoord?.latitude ?? .infinity) { _ in populateCandidates() }
+        .onChange(of: detectedCoord?.longitude ?? .infinity) { _ in populateCandidates() }
     }
 
     private var composeStep: some View {
         Form {
+            if let err = publishError, !err.isEmpty {
+                Section {
+                    Text(err).foregroundStyle(.red).font(.caption)
+                }
+            }
+
             Section {
                 Toggle("公開到社群", isOn: $isPublic)
             }
+
             Section {
                 TextField("標題", text: $title)
                 TextEditor(text: $content).frame(minHeight: 160)
             }
-            if !photos.isEmpty {
+
+            if let data = photoData, let ui = UIImage(data: data) {
                 Section("預覽照片") {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 10) {
-                            ForEach(photos) { p in
-                                if let ui = UIImage(data: p.data) {
-                                    Image(uiImage: ui)
-                                        .resizable().scaledToFill()
-                                        .frame(width: 90, height: 90)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                }
-                            }
-                        }.padding(.vertical, 6)
-                    }
+                    Image(uiImage: ui)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 240)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
             }
         }
@@ -236,6 +250,8 @@ struct AddLogWizard: View {
         }
     }
 
+    // MARK: - Candidates
+
     private func populateCandidates() {
         let coord = detectedCoord ?? vm.locationManager.location?.coordinate
         guard let coord else { candidates = []; return }
@@ -259,52 +275,104 @@ struct AddLogWizard: View {
         }
     }
 
-    // MARK: - Publish
+    // MARK: - Publish (正式版：place -> POST place (必要時) -> POST post)
 
-    private func publish() {
-        let place: Place
-        if creatingNew {
+    @MainActor
+    private func publish() async {
+        publishError = nil
+        isPublishing = true
+        defer { isPublishing = false }
+
+        do {
             let coord = detectedCoord ?? vm.locationManager.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
-            place = Place(id: UUID(), name: newPlaceName.isEmpty ? "未命名地點" : newPlaceName,
-                          type: newPlaceType,
-                          tags: normalized(newPlaceTags),
-                          coordinate: CLCodable(coord), isPublic: isPublic, ownerId: UUID())
-        } else if let picked = selectedPlace {
-            place = picked
-            // 若選到的地點沒有標籤、而使用者在新地點欄位輸入了標籤，幫它補一下
-            if picked.tags.isEmpty, !newPlaceTags.isEmpty {
-                vm.ensureTags(for: picked.id, tags: normalized(newPlaceTags))
-            }
-        } else {
-            return
-        }
 
-        vm.addLog(attachTo: place, title: title, content: content, isPublic: isPublic, photos: photos, authorName: "我")
-        dismiss()
+            // 1) 決定 place（必要時建立到後端）
+            let place: Place
+            if creatingNew {
+                place = try await vm.getOrCreatePlace(
+                    name: newPlaceName.isEmpty ? "未命名地點" : newPlaceName,
+                    description: "", // 你目前 UI 沒有輸入 description，就先空字串
+                    coordinate: coord,
+                    isPublic: isPublic,
+                    type: newPlaceType,
+                    tags: normalized(newPlaceTags),
+                    dedupRadiusMeters: 30
+                )
+            } else if let picked = selectedPlace {
+                // ⚠️ Apple POI 如果沒 serverId，不能拿去發文
+                if picked.origin == .apple {
+                    // 你可以選擇：1) 強制建立一個同名 place 到後端；2) 直接擋掉
+                    // 我這裡採「自動建立」：用 picked 的 name/coord/type/tags 建到後端
+                    place = try await vm.getOrCreatePlace(
+                        name: picked.name,
+                        description: "",
+                        coordinate: picked.coordinate.cl,
+                        isPublic: isPublic,
+                        type: picked.type,
+                        tags: picked.tags,
+                        dedupRadiusMeters: 30
+                    )
+                } else {
+                    place = picked
+                }
+            } else {
+                return
+            }
+
+            // 2) 建立 post（multipart）
+            guard let created = await PostsManager.shared.createPost(
+                placeId: place.serverId,
+                title: title,
+                bodyText: content,
+                visibility: isPublic ? .public : .private,
+                photoData: photoData
+            ) else {
+                throw NSError(
+                    domain: "PostError",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: PostsManager.shared.errorMessage ?? "Create post failed"]
+                )
+            }
+
+            // 3) 更新 vm 快取（正式版：用 place.serverId 當 key）
+            if vm.logsByPlace[place.serverId] == nil {
+                vm.logsByPlace[place.serverId] = []
+            }
+            vm.logsByPlace[place.serverId]?.insert(created, at: 0)
+
+            // 4) 確保 place 在列表（如果你 vm.getOrCreatePlace 已經 upsert 就不用，但保險）
+            if !vm.myPlaces.contains(where: { $0.id == place.id }) {
+                vm.myPlaces.insert(place, at: 0)
+            }
+            if isPublic && !vm.communityPlaces.contains(where: { $0.id == place.id }) {
+                vm.communityPlaces.insert(place, at: 0)
+            }
+
+            dismiss()
+        } catch {
+            publishError = error.localizedDescription
+        }
     }
 
-    // MARK: - Photos loading (local version)
+    // MARK: - Photo loading (single)
 
-    private func reloadPhotosLocally() async {
-        var arr: [LogPhoto] = []
+    private func reloadPhotoLocally() async {
         var exifCoord: CLLocationCoordinate2D? = nil
+        var dataOut: Data? = nil
 
-        for item in photoItems {
-            if let data = try? await item.loadTransferable(type: Data.self) {
-                arr.append(LogPhoto(data: data))
-                if exifCoord == nil,
-                   let src = CGImageSourceCreateWithData(data as CFData, nil),
-                   let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-                   let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any],
-                   let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
-                   let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
-                    exifCoord = .init(latitude: lat, longitude: lon)
-                }
+        if let item = photoItem, let data = try? await item.loadTransferable(type: Data.self) {
+            dataOut = data
+            if let src = CGImageSourceCreateWithData(data as CFData, nil),
+               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+               let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any],
+               let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
+               let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
+                exifCoord = .init(latitude: lat, longitude: lon)
             }
         }
 
         await MainActor.run {
-            self.photos = arr
+            self.photoData = dataOut
             self.detectedCoord = exifCoord ?? vm.locationManager.location?.coordinate
         }
     }
@@ -341,6 +409,8 @@ struct AddLogWizard: View {
         }
     }
 }
+
+
 
 // MARK: - Tag Editor + Chips
 
