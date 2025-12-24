@@ -8,11 +8,11 @@
 import SwiftUI
 
 struct EditPlaceSheet: View {
-    @ObservedObject var vm: MapViewModel
-    @State var place: Place
+    @State private var place: Place
+    var onSave: (Place) -> Void
+
     @Environment(\.dismiss) private var dismiss
 
-    // 可自行調整的預設標籤
     private let presetTags: [String] = [
         "咖啡","甜點","早午餐","宵夜","小吃","聚餐","安靜","插座","閱讀","散步","綠地","寵物友善","景點","拍照","親子","素食","不限時","排隊","平價","湯頭"
     ]
@@ -20,19 +20,25 @@ struct EditPlaceSheet: View {
     @State private var newTagText: String = ""
     @FocusState private var tagFieldFocused: Bool
 
+    init(place: Place, onSave: @escaping (Place) -> Void) {
+        _place = State(initialValue: place)
+        self.onSave = onSave
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("基本資訊") {
                     TextField("名稱", text: $place.name)
                     Picker("類型", selection: $place.type) {
-                        ForEach(PlaceType.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+                        ForEach(PlaceType.allCases, id: \.self) { t in
+                            Text(t.rawValue.capitalized).tag(t)
+                        }
                     }
                     Toggle("公開到社群", isOn: $place.isPublic)
                 }
 
                 Section("標籤") {
-                    // 輸入列
                     HStack(spacing: 8) {
                         TextField("輸入標籤後按加入或換行", text: $newTagText)
                             .textInputAutocapitalization(.never)
@@ -45,27 +51,26 @@ struct EditPlaceSheet: View {
                             addTagFromInput()
                         } label: {
                             Label("加入", systemImage: "plus.circle.fill")
-                                .labelStyle(.titleAndIcon)
                         }
                         .buttonStyle(.bordered)
                         .disabled(trimmed(newTagText).isEmpty)
                     }
 
-                    // 已選標籤（可點移除）
                     if !place.tags.isEmpty {
                         ChipsGrid(items: place.tags, removable: true, onTap: { removeTag($0) })
                             .padding(.top, 4)
                     } else {
-                        Text("尚未新增標籤").foregroundStyle(.secondary)
+                        Text("尚未新增標籤")
+                            .foregroundStyle(.secondary)
                     }
 
-                    // 建議標籤（可點加入/移除）
                     let filteredPresets = filteredPresetTags()
                     if !filteredPresets.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("建議")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+
                             ChipsGrid(
                                 items: filteredPresets,
                                 removable: false,
@@ -87,7 +92,7 @@ struct EditPlaceSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("儲存") {
                         place.tags = normalized(place.tags)
-                        vm.updatePlace(place)
+                        onSave(place)         // ✅ 把結果往外丟
                         dismiss()
                     }
                     .bold()
@@ -150,8 +155,6 @@ struct EditPlaceSheet: View {
     }
 }
 
-// MARK: - Shared ChipsGrid (LazyVGrid Adaptive)
-
 private struct ChipsGrid: View {
     let items: [String]
     var removable: Bool
@@ -163,9 +166,7 @@ private struct ChipsGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
             ForEach(items, id: \.self) { tag in
-                Button {
-                    onTap(tag)
-                } label: {
+                Button { onTap(tag) } label: {
                     HStack(spacing: 6) {
                         if removable {
                             Image(systemName: "xmark.circle.fill")
@@ -186,4 +187,3 @@ private struct ChipsGrid: View {
         }
     }
 }
-

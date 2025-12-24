@@ -13,14 +13,12 @@ import MapKit
 enum ActiveSheet: Identifiable, Equatable {
     case place(Place)
     case addLog
-    case nearby
     case profile // 個人頁面
     
     var id: String {
         switch self {
         case .place(let p): return "place-\(p.id)"
         case .addLog:       return "addLog"
-        case .nearby:       return "nearby"
         case .profile:      return "profile" // 個人頁面
         }
     }
@@ -31,9 +29,11 @@ private enum MapTab: Int { case mine = 0, friends = 1, everyone = 2 }
 
 struct RootMapView: View {
     @StateObject private var vm = MapViewModel()
+    @StateObject private var auth = AuthManager.shared
 
     @State private var activeSheet: ActiveSheet?
-    @State private var tagFilter: String = ""
+    @State private var searchText: String = ""
+    @FocusState private var isSearchFocused: Bool
 
     @SceneStorage("selectedMapTab") private var selectedTab: Int = MapTab.mine.rawValue
 
@@ -57,34 +57,43 @@ struct RootMapView: View {
         .sheet(item: $activeSheet) { which in
             switch which {
             case .place(let place):
-                PlaceSheetView(place: place)
-                    .environmentObject(vm)
-                    .presentationDetents(Set([.medium, .large]))
+                PlaceSheetView(
+                    place: place,
+                    mode: (vm.scope == .mine) ? .onlyMine : .normal
+                )
+                .environmentObject(vm)
+                .presentationDetents(Set([.medium, .large]))
             case .addLog:
                 AddLogWizard(vm: vm)
                     .presentationDetents(Set([.large]))
-            case .nearby:
-                NearbySheet(
-                    vm: vm,
-                    baseCoord: vm.cameraCenter ?? vm.userCoordinate,   // 以地圖中心為準，退而求其次用我的定位
-                    source: vm.scope == .mine ? .mine : .community,
-                    tagFilter: $tagFilter
-                ) { picked in
-                    vm.setCamera(to: picked.coordinate.cl, animated: true)   // 滑動動畫
-                    activeSheet = .place(picked)
-                }
-                .presentationDetents(Set([.medium, .large]))
             case .profile: // 個人頁面
-                    ProfileSheetView()
-                        .presentationDetents(Set([.medium, .large]))
+//                    ProfileSheetView()
+//                        .presentationDetents(Set([.medium, .large]))
+                ProfileSheetView()
+                    .environmentObject(vm)
+                    .presentationDetents(Set([.large]))
+
             }
         }
         .onChange(of: selectedTab) { newValue in
             vm.scope = (newValue == MapTab.mine.rawValue) ? .mine : .community
         }
+        .onChange(of: auth.isAuthenticated) { authed in   // ✅ 監聽登入/登出
+            if !authed {
+                vm.resetForLogout()       // 清空本地資料
+            } else {
+                vm.loadData(in: nil)      // 重新載入
+            }
+        }
         .task {
             vm.scope = (selectedTab == MapTab.mine.rawValue) ? .mine : .community
             vm.loadData(in: nil)
+            await vm.loadFollowedUsersPosts()
+        }
+        .onChange(of: selectedTab) { _ in
+            if selectedTab == MapTab.friends.rawValue {
+                Task { await vm.loadFollowedUsersPosts() }
+            }
         }
     }
 
@@ -108,7 +117,18 @@ struct RootMapView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                ForEach(scope == .mine ? vm.myPlaces : vm.communityPlaces, id: \.id) { place in
+                let pins: [Place] = {
+                    if selectedTab == MapTab.mine.rawValue {
+                        return vm.myPlaces
+                    } else if selectedTab == MapTab.friends.rawValue {
+                        return vm.friendPlaces
+                    } else {
+                        return vm.communityPlaces
+                    }
+                }()
+
+
+                ForEach(pins, id: \.id) { place in
                     Annotation(place.name, coordinate: place.coordinate.cl) {
                         GlassPin(icon: place.type.iconName, color: place.type.color)
                             .onTapGesture { activeSheet = .place(place) }
@@ -122,50 +142,134 @@ struct RootMapView: View {
             }
 
             if !vm.isLoadingPlaces {
-                // 右上角圓形浮動鈕（回定位／附近列表）
-                VStack(spacing: 10) {
-                    // 個人資訊
-                    Button {
-                        activeSheet = .profile
-                    } label: {
-                        CircleButtonIcon(systemName: "person.circle")
+                // 頂部工具列：左加號、中搜尋、右個人 + 搜尋結果列表
+                VStack(spacing: 0) {
+                    HStack(spacing: 12) {
+                        // 左：加號按鈕
+                        Button {
+                            activeSheet = .addLog
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 18, weight: .bold))
+                                .frame(width: 40, height: 40)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay(Circle().stroke(.white.opacity(0.25)))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+
+                        // 中：搜尋條
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            TextField("搜尋地點...", text: $searchText)
+                                .font(.system(size: 14))
+                                .focused($isSearchFocused)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(.white.opacity(0.25)))
+
+                        // 右：個人頁面按鈕
+                        Button {
+                            activeSheet = .profile
+                        } label: {
+                            Image(systemName: "person.circle")
+                                .font(.system(size: 20, weight: .semibold))
+                                .frame(width: 40, height: 40)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay(Circle().stroke(.white.opacity(0.25)))
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+
+                    // 搜尋結果列表
+                    if isSearchFocused || !searchText.isEmpty {
+                        ScrollView(.vertical) {
+                            VStack(spacing: 6) {
+                                let resultsToShow = searchText.isEmpty
+                                    ? Array(getRecentPlaces().prefix(5))
+                                    : getSearchResults()
+
+                                
+                                ForEach(resultsToShow, id: \.id) { place in
+                                    Button {
+                                        activeSheet = .place(place)
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            Image(systemName: place.type.iconName)
+                                                .foregroundStyle(place.type.color)
+                                                .frame(width: 20)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(place.name)
+                                                    .font(.subheadline)
+                                                    .fontWeight(.semibold)
+                                                if !place.tags.isEmpty {
+                                                    Text(place.tags.joined(separator: " · "))
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                                        .foregroundStyle(.primary)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                        }
+                        .frame(maxHeight: 250)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: .infinity, alignment: .topLeading)
+
+                // 右下角定位按鈕
+                VStack(spacing: 10) {
                     Button {
                         if let me = vm.userCoordinate {
-                            vm.setCamera(to: me, animated: true)   // 會滑動回去
+                            vm.setCamera(to: me, animated: true)
                         } else {
-                            vm.cameraPosition = .userLocation(fallback: .automatic) // 初次定位 fallback
+                            vm.cameraPosition = .userLocation(fallback: .automatic)
                         }
                     } label: { CircleButtonIcon(systemName: "location.fill") }
-
-                    Button { activeSheet = .nearby } label: {
-                        CircleButtonIcon(systemName: "list.bullet")
-                    }
                 }
                 .padding(.trailing, 12)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-
-                // 右下角「＋」浮動鈕
-                Button {
-                    activeSheet = .addLog
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .bold))
-                        .frame(width: 52, height: 52)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .overlay(Circle().stroke(.white.opacity(0.25)))
-                        .shadow(radius: 10, y: 6)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.trailing, 16)
-                .padding(.bottom, 16)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.bottom, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
         }
         .navigationTitle(scope == .mine ? "個人地圖" : "社群地圖")
         .navigationBarTitleDisplayMode(.inline)
-        
+    }
+
+    private func currentPlacesForSearchAndList() -> [Place] {
+        if selectedTab == MapTab.mine.rawValue {
+            return vm.myPlaces
+        } else if selectedTab == MapTab.friends.rawValue {
+            return vm.friendPlaces
+        } else {
+            return vm.communityPlaces
+        }
+    }
+
+    private func getRecentPlaces() -> [Place] {
+        currentPlacesForSearchAndList()
+    }
+
+    private func getSearchResults() -> [Place] {
+        let places = currentPlacesForSearchAndList()
+        return places.filter { place in
+            place.name.localizedCaseInsensitiveContains(searchText) ||
+            place.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
     }
 }
 

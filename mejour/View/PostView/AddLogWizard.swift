@@ -340,6 +340,16 @@ struct AddLogWizard: View {
             }
             vm.logsByPlace[place.serverId]?.insert(created, at: 0)
 
+            // 更新 exploredPlaceServerIds（標記為已探索）
+            var explored = vm.exploredPlaceServerIds
+            explored.insert(place.serverId)
+            vm.exploredPlaceServerIds = explored
+
+            // 更新 myPosts：將新建立的 post 加到個人貼文列表（避免只更新 logsByPlace）
+            var myPosts = vm.myPosts
+            myPosts.insert(created, at: 0)
+            vm.myPosts = myPosts
+
             // 4) 確保 place 在列表（如果你 vm.getOrCreatePlace 已經 upsert 就不用，但保險）
             if !vm.myPlaces.contains(where: { $0.id == place.id }) {
                 vm.myPlaces.insert(place, at: 0)

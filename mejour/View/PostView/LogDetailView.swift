@@ -26,7 +26,14 @@ struct LogDetailView: View {
                 // Header
                 if let log {
                     Text(log.title).font(.title2).bold()
-                    Text("by \(log.authorName)").foregroundStyle(.secondary)
+                    NavigationLink {
+                        FriendProfileView(userId: log.authorServerId)
+                    } label: {
+                        Text("by \(log.authorName)")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+
 
                     // Photo (正式版：單張 URL)
                     if let urlString = log.photoURL, let url = URL(string: urlString) {

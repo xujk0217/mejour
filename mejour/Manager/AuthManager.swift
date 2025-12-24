@@ -29,7 +29,7 @@ final class AuthManager: ObservableObject {
     
     /// 用預設帳號登入（先這樣寫死，之後再接 UI）
     func loginDefaultUser() async {
-        await login(username: "testadmin", password: "adminadmin")
+        await login(username: "xujk", password: "xujk0217")
     }
     
     /// 一般登入（之後如果有登入頁面可以直接重用）
@@ -58,6 +58,7 @@ final class AuthManager: ObservableObject {
         errorMessage = nil
         // 之後如果有 refresh token, /logout API，再一起處理
     }
+    
     
     // MARK: - Private
     
@@ -103,4 +104,45 @@ final class AuthManager: ObservableObject {
             throw NSError(domain: "AuthError", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
         }
     }
+    
+    @discardableResult
+    func register(username: String, email: String, password: String, displayName: String) async -> Bool {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            _ = try await requestRegister(
+                username: username,
+                email: email,
+                password: password,
+                displayName: displayName
+            )
+            return true
+        } catch {
+            self.errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func requestRegister(username: String, email: String, password: String, displayName: String) async throws -> MeUser {
+        let url = baseURL.appendingPathComponent("/api/auth/register/")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: String] = [
+            "username": username,
+            "email": email,
+            "password": password,
+            "display_name": displayName
+        ]
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+
+        return try JSONDecoder().decode(MeUser.self, from: data)
+    }
+
 }

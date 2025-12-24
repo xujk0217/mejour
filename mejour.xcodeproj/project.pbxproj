@@ -86,11 +86,12 @@
 				};
 			};
 			buildConfigurationList = 3F42AACA2E97C9DF001330DD /* Build configuration list for PBXProject "mejour" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hant";
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hant",
 			);
 			mainGroup = 3F42AAC62E97C9DF001330DD;
 			minimizedProjectReferenceProxies = 1;
@@ -256,14 +257,16 @@
 				DEVELOPMENT_TEAM = T593T3727N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用相機來拍照並建立地圖日誌。";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "需要存取您的定位來新增地圖日誌與顯示附近的公開地點。";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "需要存取您的相簿以讀取照片與其位置（EXIF）。";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Need Camera access.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Need locaation access.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Need Photo Library access.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -287,14 +290,16 @@
 				DEVELOPMENT_TEAM = T593T3727N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用相機來拍照並建立地圖日誌。";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "需要存取您的定位來新增地圖日誌與顯示附近的公開地點。";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "需要存取您的相簿以讀取照片與其位置（EXIF）。";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Need Camera access.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Need locaation access.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Need Photo Library access.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

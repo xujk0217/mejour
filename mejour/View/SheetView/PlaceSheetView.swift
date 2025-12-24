@@ -5,41 +5,43 @@
 //  Created by 許君愷 on 2025/10/9.
 //
 
+//
+//  PlaceSheetView.swift
+//  mejour
+//
+//  Created by 許君愷 on 2025/10/9.
+//
+
 import SwiftUI
+
+enum PlaceSheetMode: Equatable {
+    case normal                 // 地點頁（社群）：用 by-place 顯示公開貼文
+    case onlyMine               // 個人地圖：只顯示我的貼文（by-user 推導）
+    case onlyUser(userId: Int)  // 好友個人地圖：只顯示該 user 貼文（by-user 推導）
+}
 
 struct PlaceSheetView: View {
     let place: Place
-    @EnvironmentObject private var vm: MapViewModel
-    @State private var showEdit = false
-    
-    private var logs: [LogItem] {
-        vm.logsByPlace[place.serverId] ?? []
+    let mode: PlaceSheetMode
+
+    init(place: Place, mode: PlaceSheetMode = .normal) {
+        self.place = place
+        self.mode = mode
     }
+
+    @EnvironmentObject private var vm: MapViewModel
+    @ObservedObject private var follow = FollowStore.shared
+
+    @State private var logs: [LogItem] = []
+    @State private var showEdit = false
+    @State private var isLoading = false
 
     var body: some View {
         NavigationStack {
-            Group {
-                if #available(iOS 26.0, *) {
-                    ZStack {
-                        GlassContainer { EmptyView() }.opacity(0)
-                        GlassCard(cornerRadius: 24) {
-                            content
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                    }
-                    .background(.clear)
-                } else {
-                    content
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                }
-            }
-        }
-        .navigationTitle("地點資訊")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await vm.loadPosts(for: place)
+            content
+                .navigationTitle("地點資訊")
+                .navigationBarTitleDisplayMode(.inline)
+                .task { await loadLogs() }
         }
     }
 
@@ -49,20 +51,19 @@ struct PlaceSheetView: View {
                 header
                 Divider().opacity(0.2)
 
-                if logs.isEmpty {
-                    Text("目前沒有公開日誌").foregroundStyle(.secondary)
+                if isLoading {
+                    ProgressView("載入中…")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if logs.isEmpty {
+                    Text(emptyMessage)
+                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     LazyVStack(spacing: 12) {
-                        ForEach(logs, id: \.id) { log in
-                            Group {
-                                if #available(iOS 26.0, *) {
-                                    GlassCard(cornerRadius: 16) { logRow(log) }
-                                } else {
-                                    logRow(log).padding(.vertical, 6)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ForEach(logs) { log in
+                            logRow(log)
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
@@ -73,23 +74,46 @@ struct PlaceSheetView: View {
         }
     }
 
+    private var emptyMessage: String {
+        switch mode {
+        case .normal:
+            return "目前沒有公開日誌"
+        case .onlyMine:
+            return "你在這個地點還沒有發布日誌"
+        case .onlyUser:
+            return "對方在這個地點還沒有發布日誌"
+        }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 GlassPin(icon: place.type.iconName, color: place.type.color)
-                VStack(alignment: .leading) {
+
+                VStack(alignment: .leading, spacing: 4) {
                     Text(place.name).font(.headline)
                     if place.tags.isEmpty {
-                        Text("無標籤").foregroundStyle(.tertiary).font(.caption)
+                        Text("無標籤")
+                            .foregroundStyle(.tertiary)
+                            .font(.caption)
                     }
                 }
+
                 Spacer()
-                Button { showEdit = true } label: {
-                    Image(systemName: "pencil")
-                }
-                .platformButtonStyle()
-                .sheet(isPresented: $showEdit) {
-                    EditPlaceSheet(vm: vm, place: place)
+
+                // 個人/好友地圖一般不給編輯
+                if mode == .normal {
+                    Button { showEdit = true } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.bordered)
+                    .sheet(isPresented: $showEdit) {
+                        EditPlaceSheet(place: place) { updated in
+                            // ✅ 用 EnvironmentObject 的 backing wrapper 取出真正的物件
+                            _vm.wrappedValue.updatePlace(updated)
+                        }
+                        .environmentObject(vm)
+                    }
                 }
             }
 
@@ -100,9 +124,36 @@ struct PlaceSheetView: View {
     }
 
     private func logRow(_ log: LogItem) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let myId = AuthManager.shared.currentUser?.id
+        let isMe = (myId == log.authorServerId)
+
+        // ✅ FollowStore 沒 isFollowing，就用 contains
+        let isFollowed = (!isMe) && follow.contains(log.authorServerId)
+
+        return VStack(alignment: .leading, spacing: 8) {
             Text(log.title).font(.headline)
-            Text("by \(log.authorName)").font(.caption).foregroundStyle(.secondary)
+
+            NavigationLink {
+                FriendProfileView(userId: log.authorServerId)
+                    .environmentObject(vm)
+            } label: {
+                HStack(spacing: 8) {
+                    Text("by \(log.authorName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if isFollowed {
+                        Text("已追蹤")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.thinMaterial, in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.18)))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
 
             logPhotoPreview(log)
 
@@ -110,18 +161,17 @@ struct PlaceSheetView: View {
                 .lineLimit(3)
                 .foregroundStyle(.secondary)
 
-            HStack {
-                Button { /* like */ } label: {
-                    Label("\(log.likeCount)", systemImage: "hand.thumbsup")
-                }
-                .platformButtonStyle()
+            HStack(spacing: 10) {
+                // ✅ 不要用舊的 platformButtonStyle，避免你專案裡衝突
+                Label("\(log.likeCount)", systemImage: "hand.thumbsup")
+                    .buttonStyle(.bordered)
 
                 NavigationLink {
                     LogDetailView(postId: log.serverId)
                 } label: {
                     Label("查看全文", systemImage: "chevron.right")
                 }
-                .platformButtonStyle()
+                .buttonStyle(.bordered)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -129,16 +179,14 @@ struct PlaceSheetView: View {
 
     @ViewBuilder
     private func logPhotoPreview(_ log: LogItem) -> some View {
-        // 1) 後端 URL：photo
         if let urlString = log.photoURL, let url = URL(string: urlString) {
-            AsyncImage(url: url, transaction: .init(animation: .easeInOut)) { phase in
+            AsyncImage(url: url) { phase in
                 switch phase {
                 case .empty:
                     RoundedRectangle(cornerRadius: 14)
                         .fill(.thinMaterial)
-                        .frame(height: 260)
+                        .frame(height: 220)
                         .overlay(ProgressView())
-
                 case .success(let image):
                     image
                         .resizable()
@@ -146,11 +194,10 @@ struct PlaceSheetView: View {
                         .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 300)
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 14))
-
                 case .failure:
                     RoundedRectangle(cornerRadius: 14)
                         .fill(.thinMaterial)
-                        .frame(height: 260)
+                        .frame(height: 220)
                         .overlay(
                             VStack(spacing: 8) {
                                 Image(systemName: "photo")
@@ -160,33 +207,36 @@ struct PlaceSheetView: View {
                                     .foregroundStyle(.secondary)
                             }
                         )
-
                 @unknown default:
                     EmptyView()
                 }
             }
         }
-        else {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.thinMaterial)
-                .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 220)
-                .overlay(
-                    VStack(spacing: 8) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text("沒有附上照片")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                )
-        }
     }
 
+    @MainActor
+    private func loadLogs() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        switch mode {
+        case .normal:
+            // 社群地點頁：by-place（會拿到公開貼文）
+            await vm.loadPosts(for: place, force: true)
+            logs = vm.logsByPlace[place.serverId] ?? []
+
+        case .onlyMine:
+            // 個人地圖：只取 myPosts（避免混到別人的公開貼文）
+            logs = vm.myPostsAtPlace(placeServerId: place.serverId)
+
+        case .onlyUser(let userId):
+            // 好友地圖：只取 userPostsCache[userId]
+            logs = vm.postsOfUserAtPlace(userId: userId, placeServerId: place.serverId)
+        }
+    }
 }
 
-// MARK: - Local ChipsGrid for header
-
+// MARK: - ChipsGrid
 private struct ChipsGrid: View {
     let items: [String]
     var removable: Bool
@@ -198,9 +248,7 @@ private struct ChipsGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
             ForEach(items, id: \.self) { tag in
-                Button {
-                    onTap(tag)
-                } label: {
+                Button { onTap(tag) } label: {
                     HStack(spacing: 6) {
                         if removable {
                             Image(systemName: "xmark.circle.fill")
@@ -223,12 +271,7 @@ private struct ChipsGrid: View {
 }
 
 extension View {
-    @ViewBuilder
     func platformButtonStyle() -> some View {
-        if #available(iOS 26.0, *) {
-            self.buttonStyle(GlassButtonStyle())
-        } else {
-            self.buttonStyle(.bordered)
-        }
+        self.buttonStyle(.bordered)
     }
 }

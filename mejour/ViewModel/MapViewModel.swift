@@ -20,22 +20,100 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     @Published var scope: MapScope = .mine
     @Published var cameraPosition: MapCameraPosition = .userLocation(fallback: .automatic)
+
     @Published var myPlaces: [Place] = []
     @Published var communityPlaces: [Place] = []
     @Published var selectedPlace: Place?
+
     @Published var isPresentingAddSheet = false
     @Published var cameraCenter: CLLocationCoordinate2D?
     @Published var isLoadingPlaces = false
+
+    // MARK: - My posts / explored
+
+    @Published var myPosts: [LogItem] = []
+    @Published var exploredPlaceServerIds: Set<Int> = []
+
+    // MARK: - Friend/User Posts Cache (for "onlyUser" mode)
+
+    /// key = userId(Int)
+    @Published var userPostsCache: [Int: [LogItem]] = [:]
+
+    // MARK: - Posts cache by place (community / normal mode)
+
+    /// key = place.serverId(Int)
+    @Published var logsByPlace: [Int: [LogItem]] = [:]
+
+    // MARK: - Location
 
     private(set) var locationManager = CLLocationManager()
     @Published var userCoordinate: CLLocationCoordinate2D?
     @Published var userHeading: CLHeading?
 
-    // ✅ 正式版：用 place.serverId 當 key（跟後端一致）
-    @Published var logsByPlace: [Int: [LogItem]] = [:]
+    // MARK: - Derived (places)
 
-    // 全部地點（我的 + 社群）
+    /// 全部地點（我的 + 社群）
     var allPlaces: [Place] { myPlaces + communityPlaces }
+
+    /// ✅ 我探索過的 places：只顯示「有發過 post」的地點
+    var myExploredPlaces: [Place] {
+        // 用 serverId 做 index，但要避免 duplicate key（保留第一個）
+        var index: [Int: Place] = [:]
+        for p in allPlaces {
+            if index[p.serverId] == nil {
+                index[p.serverId] = p
+            }
+        }
+        return exploredPlaceServerIds.compactMap { index[$0] }
+    }
+
+    /// 追蹤者探索過的 place ids（從 userPostsCache 推導）
+    var friendExploredPlaceServerIds: Set<Int> {
+        let ids = FollowStore.shared.ids
+        if ids.isEmpty { return [] }
+
+        var out = Set<Int>()
+        for uid in ids {
+            let posts = userPostsCache[uid] ?? []
+            for p in posts {
+                out.insert(p.placeServerId)
+            }
+        }
+        return out
+    }
+
+    /// 追蹤者探索過的 Place（用 communityPlaces 映射回去）
+    var friendPlaces: [Place] {
+        let ids = friendExploredPlaceServerIds
+        if ids.isEmpty { return [] }
+
+        // communityPlaces 也可能有重複 serverId，保留第一個避免 fatal duplicate
+        var index: [Int: Place] = [:]
+        for p in communityPlaces {
+            if index[p.serverId] == nil {
+                index[p.serverId] = p
+            }
+        }
+        return ids.compactMap { index[$0] }
+    }
+    
+    // MARK: - Place updates (local cache update)
+    func updatePlace(_ updated: Place) {
+        // 更新 myPlaces
+        if let i = myPlaces.firstIndex(where: { $0.id == updated.id }) {
+            myPlaces[i] = updated
+        }
+
+        // 更新 communityPlaces
+        if let j = communityPlaces.firstIndex(where: { $0.id == updated.id }) {
+            communityPlaces[j] = updated
+        }
+
+        // 如果你還有其他依 place 相關的快取，也可在這邊同步更新
+    }
+
+
+    // MARK: - Init
 
     override init() {
         super.init()
@@ -46,7 +124,7 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         locationManager.startUpdatingHeading()
     }
 
-    // MARK: - Location
+    // MARK: - Location delegate
 
     func setCamera(
         to coord: CLLocationCoordinate2D,
@@ -86,12 +164,90 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         return AuthManager.shared.accessToken?.isEmpty == false
     }
 
+    // MARK: - Logout reset
+
+    @MainActor
+    func resetForLogout() {
+        // places
+        myPlaces = []
+        communityPlaces = []
+        selectedPlace = nil
+
+        // posts cache
+        logsByPlace = [:]
+
+        // my
+        myPosts = []
+        exploredPlaceServerIds = []
+
+        // friends
+        userPostsCache = [:]
+
+        // camera etc (optional)
+        cameraCenter = nil
+    }
+
+    // MARK: - My posts / explored
+
+    func myPostsAtPlace(placeServerId: Int) -> [LogItem] {
+        myPosts.filter { $0.placeServerId == placeServerId }
+    }
+
+    @MainActor
+    func loadMyPostsAndExploredPlaces() async {
+        guard let me = AuthManager.shared.currentUser else { return }
+        let posts = await PostsManager.shared.fetchPostsByUser(userId: me.id)
+        self.myPosts = posts
+        self.exploredPlaceServerIds = Set(posts.map(\.placeServerId))
+    }
+
+    // MARK: - Friend cache helpers
+
+    func postsOfUserAtPlace(userId: Int, placeServerId: Int) -> [LogItem] {
+        let posts = userPostsCache[userId] ?? []
+        return posts.filter { $0.placeServerId == placeServerId }
+    }
+
+    func setUserPostsCache(userId: Int, posts: [LogItem]) {
+        var cache = userPostsCache
+        cache[userId] = posts
+        userPostsCache = cache
+    }
+
+
+    /// 把所有追蹤的人的 posts 抓回來放 cache（不用新 API：走既有 by-user）
+    @MainActor
+    func loadFollowedUsersPosts() async {
+        let ids = FollowStore.shared.ids
+        guard !ids.isEmpty else { return }
+
+        for uid in ids {
+            let posts = await PostsManager.shared.fetchPostsByUser(userId: uid)
+            var cache = userPostsCache
+            cache[uid] = posts
+            userPostsCache = cache
+        }
+    }
+
+    /// 某 place：聚合所有追蹤者在該地點的貼文
+    func friendPosts(at placeServerId: Int) -> [LogItem] {
+        let ids = FollowStore.shared.ids
+        guard !ids.isEmpty else { return [] }
+
+        var out: [LogItem] = []
+        for uid in ids {
+            let posts = userPostsCache[uid] ?? []
+            out.append(contentsOf: posts.filter { $0.placeServerId == placeServerId })
+        }
+        return out
+    }
+
     // MARK: - API Places
 
     /// 取回 places，並切成 my/community 兩份
     func loadPlacesFromAPI() async {
         guard await ensureLoginIfNeeded() else { return }
-        
+
         isLoadingPlaces = true
         defer { isLoadingPlaces = false }
 
@@ -108,6 +264,9 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         // community：所有 public
         self.communityPlaces = dedupPlaces(all.filter { $0.isPublic })
+
+        // 只把「我有發文」的 place 記錄下來（個人地圖用）
+        await loadMyPostsAndExploredPlaces()
     }
 
     /// 給 RootMapView 既有呼叫點用
@@ -118,7 +277,8 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
-    /// ✅ 新增地點流程（同名 + 距離近似查重 → create）
+    // MARK: - Create place (dedup -> create)
+
     func getOrCreatePlace(
         name: String,
         description: String,
@@ -159,47 +319,59 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         return created
     }
 
-    /// 把 place 插入/更新到 myPlaces & communityPlaces
     private func upsertPlaceIntoLists(_ p: Place) {
-        if let i = myPlaces.firstIndex(where: { $0.id == p.id }) {
-            myPlaces[i] = p
-        } else {
-            if let myUUID = UUID(uuidString: AuthManager.shared.currentUser?.uuid ?? ""),
-               p.ownerId == myUUID {
-                myPlaces.insert(p, at: 0)
-            }
-        }
+        // 檢查當前使用者是否是景點的擁有者
+        let isCurrentUserOwner = AuthManager.shared.currentUser?.uuid == p.ownerId.uuidString
 
+        // myPlaces - 只有當前使用者擁有的景點才加入
+        var my = myPlaces
+        if let i = my.firstIndex(where: { $0.id == p.id }) {
+            my[i] = p
+        } else if isCurrentUserOwner {
+            my.insert(p, at: 0)
+        }
+        myPlaces = my
+
+        // communityPlaces（public only）
         if p.isPublic {
-            if let j = communityPlaces.firstIndex(where: { $0.id == p.id }) {
-                communityPlaces[j] = p
+            var comm = communityPlaces
+            if let j = comm.firstIndex(where: { $0.id == p.id }) {
+                comm[j] = p
             } else {
-                communityPlaces.insert(p, at: 0)
+                comm.insert(p, at: 0)
             }
+            communityPlaces = comm
         }
     }
 
-    /// 同名 + 距離近似查重
+
     private func findExistingPlaceNear(
         name: String,
         coordinate: CLLocationCoordinate2D,
         within meters: CLLocationDistance,
         includePrivate: Bool
     ) -> Place? {
+
         let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let base = includePrivate ? allPlaces : communityPlaces
 
-        return base
-            .filter {
-                $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .localizedCaseInsensitiveCompare(name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let sameName = base.filter { p in
+            p.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(trimmedName) == .orderedSame
+        }
+
+        var best: (Place, CLLocationDistance)?
+        for p in sameName {
+            let d = target.distance(from: CLLocation(latitude: p.coordinate.latitude, longitude: p.coordinate.longitude))
+            if d <= meters {
+                if best == nil || d < best!.1 {
+                    best = (p, d)
+                }
             }
-            .map {
-                ($0, target.distance(from: CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude)))
-            }
-            .filter { $0.1 <= meters }
-            .sorted(by: { $0.1 < $1.1 })
-            .first?.0
+        }
+        return best?.0
     }
 
     // MARK: - Apple POIs
@@ -230,7 +402,7 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
 
                     return Place(
                         id: UUID(),
-                        serverId: -1, // ✅ Apple POI: not in DB
+                        serverId: -1, // Apple POI: not in DB
                         name: item.name ?? "未命名地點",
                         type: inferred,
                         tags: [],
@@ -294,44 +466,9 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
-    // MARK: - Photos / EXIF
+    // MARK: - Posts / Logs (community / normal mode)
 
-//    func makePhotos(from items: [PhotosPickerItem]) async -> (photos: [LogPhoto], exifCoord: CLLocationCoordinate2D?) {
-//        var arr: [LogPhoto] = []
-//        var exifCoord: CLLocationCoordinate2D? = nil
-//
-//        for item in items {
-//            if let data = try? await item.loadTransferable(type: Data.self) {
-//                arr.append(LogPhoto(data: data))
-//                if exifCoord == nil,
-//                   let src = CGImageSourceCreateWithData(data as CFData, nil),
-//                   let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-//                   let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any],
-//                   let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
-//                   let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
-//                    exifCoord = .init(latitude: lat, longitude: lon)
-//                }
-//            }
-//        }
-//        return (arr, exifCoord)
-//    }
-
-    func extractCoordinate(from item: PhotosPickerItem?) async -> CLLocationCoordinate2D? {
-        if let item,
-           let data = try? await item.loadTransferable(type: Data.self),
-           let src = CGImageSourceCreateWithData(data as CFData, nil),
-           let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-           let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any],
-           let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
-           let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
-            return .init(latitude: lat, longitude: lon)
-        }
-        return locationManager.location?.coordinate
-    }
-
-    // MARK: - Posts / Logs (正式版)
-
-    /// ✅ 取得某地點的 posts（從後端），寫進 cache：logsByPlace[place.serverId]
+    /// 社群地點頁：用 by-place 拿公開貼文
     @MainActor
     func loadPosts(for place: Place, force: Bool = false) async {
         guard await ensureLoginIfNeeded() else { return }
@@ -345,15 +482,14 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         logsByPlace[place.serverId] = posts
     }
 
-    /// ✅ 新增 post：必要時先把 Apple POI 轉成 DB Place，再 createPost
+    /// 新增 post：必要時先把 Apple POI 轉成 DB Place，再 createPost
     @MainActor
     func addLog(
         attachTo place: Place,
         title: String,
         content: String,
         isPublic: Bool,
-        photoData: Data?,
-        authorName: String = "我"
+        photoData: Data?
     ) async -> LogItem? {
 
         guard await ensureLoginIfNeeded() else { return nil }
@@ -364,7 +500,7 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
             do {
                 targetPlace = try await getOrCreatePlace(
                     name: place.name,
-                    description: "", // ✅ 不要硬塞 place.name 當 description（可改成 UI 欄位）
+                    description: "",
                     coordinate: place.coordinate.cl,
                     isPublic: isPublic,
                     type: place.type,
@@ -376,7 +512,7 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
             }
         }
 
-        // 2) 打後端建立 post
+        // 2) 建立 post
         let created = await PostsManager.shared.createPost(
             placeId: targetPlace.serverId,
             title: title,
@@ -387,36 +523,26 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         guard let created else { return nil }
 
-        // 3) 更新 cache（key 用 place.serverId）
-        logsByPlace[targetPlace.serverId, default: []].insert(created, at: 0)
+        // 3) 更新 cache（by-place）— 用「重新賦值」確保 @Published 觸發
+        var placeLogs = logsByPlace[targetPlace.serverId] ?? []
+        placeLogs.insert(created, at: 0)
+        logsByPlace[targetPlace.serverId] = placeLogs
 
-        // 4) 確保 place 在列表
+        // 4) 更新我的 posts/explored — 用「重新賦值」確保刷新
+        myPosts = [created] + myPosts
+
+        var explored = exploredPlaceServerIds
+        explored.insert(created.placeServerId)
+        exploredPlaceServerIds = explored
+
+        // 5) 確保 place 在列表（myPlaces/communityPlaces 也要用重新賦值比較穩）
         upsertPlaceIntoLists(targetPlace)
+
 
         return created
     }
 
-    // MARK: - Place updates
-
-    func updatePlace(_ updated: Place) {
-        if let i = myPlaces.firstIndex(where: { $0.id == updated.id }) {
-            myPlaces[i] = updated
-        }
-        if let j = communityPlaces.firstIndex(where: { $0.id == updated.id }) {
-            communityPlaces[j] = updated
-        }
-    }
-
     // MARK: - Nearby & Dedup
-
-    func nearbyCommunityPlace(to coord: CLLocationCoordinate2D, within meters: CLLocationDistance = 120) -> Place? {
-        let here = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-        return communityPlaces
-            .map { ($0, here.distance(from: CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude))) }
-            .filter { $0.1 <= meters }
-            .sorted(by: { $0.1 < $1.1 })
-            .first?.0
-    }
 
     enum PlaceSource { case mine, community, all }
 
@@ -439,25 +565,39 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         let here = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
         let uniq = dedupPlaces(base)
 
-        let filtered = uniq.filter { p in
-            let passTag: Bool = {
-                guard let t = tagFilter, !t.isEmpty else { return true }
-                return p.tags.contains { $0.localizedCaseInsensitiveContains(t) }
-            }()
+        var filtered: [Place] = []
+        filtered.reserveCapacity(uniq.count)
+
+        for p in uniq {
+            let passTag: Bool
+            if let t = tagFilter, !t.isEmpty {
+                passTag = p.tags.contains { $0.localizedCaseInsensitiveContains(t) }
+            } else {
+                passTag = true
+            }
+
+            if !passTag { continue }
+
             let d = here.distance(from: CLLocation(latitude: p.coordinate.latitude, longitude: p.coordinate.longitude))
-            return passTag && d <= radiusMeters
+            if d <= radiusMeters {
+                filtered.append(p)
+            }
         }
 
-        return filtered.sorted {
+        filtered.sort {
             let d0 = here.distance(from: CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude))
             let d1 = here.distance(from: CLLocation(latitude: $1.coordinate.latitude, longitude: $1.coordinate.longitude))
             return d0 < d1
-        }.prefix(limit).map { $0 }
+        }
+
+        return Array(filtered.prefix(limit))
     }
 
     private func dedupPlaces(_ src: [Place]) -> [Place] {
         var seen = Set<String>()
         var out: [Place] = []
+        out.reserveCapacity(src.count)
+
         for p in src {
             let key = "\(p.name.lowercased())-\(round(p.coordinate.latitude * 10_000))/\(round(p.coordinate.longitude * 10_000))"
             if !seen.contains(key) {
