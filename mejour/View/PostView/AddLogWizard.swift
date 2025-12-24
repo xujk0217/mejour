@@ -350,6 +350,10 @@ struct AddLogWizard: View {
             myPosts.insert(created, at: 0)
             vm.myPosts = myPosts
 
+            // 若要確保快取時間戳記一致，按需刷新 vm 的快取（會更新 timestamps）
+            await vm.loadPosts(for: place, force: true)
+            await vm.loadMyPostsAndExploredPlaces(force: true)
+
             // 4) 確保 place 在列表（如果你 vm.getOrCreatePlace 已經 upsert 就不用，但保險）
             if !vm.myPlaces.contains(where: { $0.id == place.id }) {
                 vm.myPlaces.insert(place, at: 0)

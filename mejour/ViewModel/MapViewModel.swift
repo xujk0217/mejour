@@ -43,6 +43,17 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     /// key = place.serverId(Int)
     @Published var logsByPlace: [Int: [LogItem]] = [:]
+    /// 快取最後更新時間：key = place.serverId
+    private var postsLastRefreshByPlace: [Int: Date] = [:]
+
+    /// 我的貼文快取最後更新時間
+    private var myPostsLastRefresh: Date? = nil
+
+    /// 追蹤者貼文快取最後更新時間（key = userId）
+    private var userPostsLastRefresh: [Int: Date] = [:]
+
+    /// 快取存活時間（秒）
+    private let postsCacheTTL: TimeInterval = 300 // 5分鐘
 
     // MARK: - Location
 
@@ -194,11 +205,17 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     @MainActor
-    func loadMyPostsAndExploredPlaces() async {
+    func loadMyPostsAndExploredPlaces(force: Bool = false) async {
         guard let me = AuthManager.shared.currentUser else { return }
+
+        if !force, let last = myPostsLastRefresh, Date().timeIntervalSince(last) < postsCacheTTL {
+            return
+        }
+
         let posts = await PostsManager.shared.fetchPostsByUser(userId: me.id)
         self.myPosts = posts
         self.exploredPlaceServerIds = Set(posts.map(\.placeServerId))
+        self.myPostsLastRefresh = Date()
     }
 
     // MARK: - Friend cache helpers
@@ -212,20 +229,25 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         var cache = userPostsCache
         cache[userId] = posts
         userPostsCache = cache
+        userPostsLastRefresh[userId] = Date()
     }
 
 
     /// 把所有追蹤的人的 posts 抓回來放 cache（不用新 API：走既有 by-user）
     @MainActor
-    func loadFollowedUsersPosts() async {
+    func loadFollowedUsersPosts(force: Bool = false) async {
         let ids = FollowStore.shared.ids
         guard !ids.isEmpty else { return }
 
         for uid in ids {
+            if !force, let last = userPostsLastRefresh[uid], Date().timeIntervalSince(last) < postsCacheTTL {
+                continue
+            }
             let posts = await PostsManager.shared.fetchPostsByUser(userId: uid)
             var cache = userPostsCache
             cache[uid] = posts
             userPostsCache = cache
+            userPostsLastRefresh[uid] = Date()
         }
     }
 
@@ -474,12 +496,16 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         guard await ensureLoginIfNeeded() else { return }
         guard place.serverId > 0 else { return } // Apple POI 尚未入庫，不能查
 
-        if !force, let cached = logsByPlace[place.serverId], !cached.isEmpty {
+        // 如果有 cache 且未過期，且沒有 force，則跳過
+        if !force,
+           let cached = logsByPlace[place.serverId], !cached.isEmpty,
+           let last = postsLastRefreshByPlace[place.serverId], Date().timeIntervalSince(last) < postsCacheTTL {
             return
         }
 
         let posts = await PostsManager.shared.fetchPostsByPlace(placeId: place.serverId)
         logsByPlace[place.serverId] = posts
+        postsLastRefreshByPlace[place.serverId] = Date()
     }
 
     /// 新增 post：必要時先把 Apple POI 轉成 DB Place，再 createPost
@@ -534,6 +560,10 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
         var explored = exploredPlaceServerIds
         explored.insert(created.placeServerId)
         exploredPlaceServerIds = explored
+
+        // 更新快取時間戳記（標記為新鮮）
+        postsLastRefreshByPlace[targetPlace.serverId] = Date()
+        myPostsLastRefresh = Date()
 
         // 5) 確保 place 在列表（myPlaces/communityPlaces 也要用重新賦值比較穩）
         upsertPlaceIntoLists(targetPlace)

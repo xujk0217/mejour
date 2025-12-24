@@ -38,78 +38,74 @@ struct RootMapView: View {
     @SceneStorage("selectedMapTab") private var selectedTab: Int = MapTab.mine.rawValue
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            // Tab 1: 個人
-            mapContent(scope: .mine)
-                .tabItem { Label("個人", systemImage: "person.crop.circle") }
-                .tag(MapTab.mine.rawValue)
+        ZStack {
+            // 如果已登入，顯示地圖
+            if auth.isAuthenticated {
+                TabView(selection: $selectedTab) {
+                    // Tab 1: 個人
+                    mapContent(scope: .mine)
+                        .tabItem { Label("個人", systemImage: "person.crop.circle") }
+                        .tag(MapTab.mine.rawValue)
 
-            // Tab 2: 朋友（目前行為與社群相同）
-            mapContent(scope: .community)
-                .tabItem { Label("朋友", systemImage: "person.2") }
-                .tag(MapTab.friends.rawValue)
+                    // Tab 2: 朋友（目前行為與社群相同）
+                    mapContent(scope: .community)
+                        .tabItem { Label("朋友", systemImage: "person.2") }
+                        .tag(MapTab.friends.rawValue)
 
-            // Tab 3: 社群（目前行為與社群相同）
-            mapContent(scope: .community)
-                .tabItem { Label("社群", systemImage: "person.3") }
-                .tag(MapTab.everyone.rawValue)
-        }
-        .sheet(item: $activeSheet) { which in
-            switch which {
-            case .place(let place):
-                PlaceSheetView(
-                    place: place,
-                    mode: (vm.scope == .mine) ? .onlyMine : .normal
-                )
-                .environmentObject(vm)
-                .presentationDetents(Set([.medium, .large]))
-            case .addLog:
-                AddLogWizard(vm: vm)
-                    .presentationDetents(Set([.large]))
-            case .profile: // 個人頁面
-//                    ProfileSheetView()
-//                        .presentationDetents(Set([.medium, .large]))
-                ProfileSheetView()
-                    .environmentObject(vm)
-                    .presentationDetents(Set([.large]))
-
-            }
-        }
-        .onChange(of: selectedTab) { newValue in
-            vm.scope = (newValue == MapTab.mine.rawValue) ? .mine : .community
-        }
-        .onChange(of: auth.isAuthenticated) { authed in   // ✅ 監聽登入/登出
-            if !authed {
-                vm.resetForLogout()       // 清空本地資料
+                    // Tab 3: 社群（目前行為與社群相同）
+                    mapContent(scope: .community)
+                        .tabItem { Label("社群", systemImage: "person.3") }
+                        .tag(MapTab.everyone.rawValue)
+                }
+                .sheet(item: $activeSheet) { which in
+                    switch which {
+                    case .place(let place):
+                        PlaceSheetView(
+                            place: place,
+                            mode: (vm.scope == .mine) ? .onlyMine : .normal
+                        )
+                        .environmentObject(vm)
+                        .presentationDetents(Set([.medium, .large]))
+                    case .addLog:
+                        AddLogWizard(vm: vm)
+                            .presentationDetents(Set([.large]))
+                    case .profile: // 個人頁面
+                        ProfileSheetView()
+                            .environmentObject(vm)
+                            .presentationDetents(Set([.large]))
+                    }
+                }
+                .onChange(of: selectedTab) { newValue in
+                    vm.scope = (newValue == MapTab.mine.rawValue) ? .mine : .community
+                }
+                .onChange(of: auth.isAuthenticated) { authed in
+                    if !authed {
+                        vm.resetForLogout()
+                    } else {
+                        vm.loadData(in: nil)
+                    }
+                }
+                .task {
+                    vm.scope = (selectedTab == MapTab.mine.rawValue) ? .mine : .community
+                    vm.loadData(in: nil)
+                    await vm.loadFollowedUsersPosts()
+                }
+                .onChange(of: selectedTab) { _ in
+                    if selectedTab == MapTab.friends.rawValue {
+                        Task { await vm.loadFollowedUsersPosts() }
+                    }
+                }
             } else {
-                vm.loadData(in: nil)      // 重新載入
-            }
-        }
-        .task {
-            vm.scope = (selectedTab == MapTab.mine.rawValue) ? .mine : .community
-            vm.loadData(in: nil)
-            await vm.loadFollowedUsersPosts()
-        }
-        .onChange(of: selectedTab) { _ in
-            if selectedTab == MapTab.friends.rawValue {
-                Task { await vm.loadFollowedUsersPosts() }
+                // 未登入：顯示登入頁面
+                LoginOverlayView(auth: auth)
             }
         }
     }
 
     // MARK: - 地圖內容（兩個 Tab 共用，同一份 UI，只換 scope）
     private func mapContent(scope: MapScope) -> some View {
-        ZStack(alignment: .bottom) {
-            if vm.isLoadingPlaces {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("載入地點中…")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.thickMaterial)
-            } else {
-                Map(position: $vm.cameraPosition, selection: $vm.selectedPlace) {
+        ZStack(alignment: .center) {
+            Map(position: $vm.cameraPosition, selection: $vm.selectedPlace) {
                 if let me = vm.userCoordinate {
                     Annotation("me", coordinate: me) {
                         MyUserPuck(heading: vm.userHeading?.trueHeading)
@@ -127,7 +123,6 @@ struct RootMapView: View {
                     }
                 }()
 
-
                 ForEach(pins, id: \.id) { place in
                     Annotation(place.name, coordinate: place.coordinate.cl) {
                         GlassPin(icon: place.type.iconName, color: place.type.color)
@@ -139,9 +134,34 @@ struct RootMapView: View {
             .onMapCameraChange { ctx in
                 vm.cameraCenter = ctx.region.center
             }
+            
+            // 登入與載入狀態指示器（浮動卡片，中心放大）
+            if auth.isLoading || vm.isLoadingPlaces {
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .scaleEffect(1.5, anchor: .center)
+                    VStack(spacing: 6) {
+                        if auth.isLoading {
+                            Text("登入中…")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                        }
+                        if vm.isLoadingPlaces {
+                            Text("載入地圖資料中…")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 28)
+                .background(.thickMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .frame(maxWidth: 280)
             }
 
-            if !vm.isLoadingPlaces {
+            if !vm.isLoadingPlaces && !auth.isLoading {
                 // 頂部工具列：左加號、中搜尋、右個人 + 搜尋結果列表
                 VStack(spacing: 0) {
                     HStack(spacing: 12) {

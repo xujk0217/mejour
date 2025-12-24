@@ -180,37 +180,21 @@ struct PlaceSheetView: View {
     @ViewBuilder
     private func logPhotoPreview(_ log: LogItem) -> some View {
         if let urlString = log.photoURL, let url = URL(string: urlString) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .empty:
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(.thinMaterial)
-                        .frame(height: 220)
-                        .overlay(ProgressView())
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 300)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                case .failure:
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(.thinMaterial)
-                        .frame(height: 220)
-                        .overlay(
-                            VStack(spacing: 8) {
-                                Image(systemName: "photo")
-                                    .font(.system(size: 24, weight: .semibold))
-                                Text("照片載入失敗")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        )
-                @unknown default:
-                    EmptyView()
-                }
+            CachedAsyncImage(url: url) { image in
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 300)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            } placeholder: {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.thinMaterial)
+                    .frame(height: 220)
+                    .overlay(ProgressView())
             }
+        } else {
+            EmptyView()
         }
     }
 
@@ -221,17 +205,30 @@ struct PlaceSheetView: View {
 
         switch mode {
         case .normal:
-            // 社群地點頁：by-place（會拿到公開貼文）
-            await vm.loadPosts(for: place, force: true)
+            // 社群地點頁：by-place（使用快取，非必要不強制 reload）
+            await vm.loadPosts(for: place) // 內部已檢查快取
             logs = vm.logsByPlace[place.serverId] ?? []
 
         case .onlyMine:
-            // 個人地圖：只取 myPosts（避免混到別人的公開貼文）
-            logs = vm.myPostsAtPlace(placeServerId: place.serverId)
+            // 個人地圖：優先使用 vm.myPosts 快取，若為空則按需載入一次
+            var my = vm.myPostsAtPlace(placeServerId: place.serverId)
+            if my.isEmpty {
+                await vm.loadMyPostsAndExploredPlaces()
+                my = vm.myPostsAtPlace(placeServerId: place.serverId)
+            }
+            logs = my
 
         case .onlyUser(let userId):
-            // 好友地圖：只取 userPostsCache[userId]
-            logs = vm.postsOfUserAtPlace(userId: userId, placeServerId: place.serverId)
+            // 好友地圖：先用快取，若該 user 尚未快取則只為該 user 取得一次
+            var posts = vm.postsOfUserAtPlace(userId: userId, placeServerId: place.serverId)
+            let cached = vm.userPostsCache[userId] ?? []
+            if cached.isEmpty {
+                // 只抓該 user 的貼文，不會影響其他 cache
+                let fetched = await PostsManager.shared.fetchPostsByUser(userId: userId)
+                vm.setUserPostsCache(userId: userId, posts: fetched)
+                posts = vm.postsOfUserAtPlace(userId: userId, placeServerId: place.serverId)
+            }
+            logs = posts
         }
     }
 }
