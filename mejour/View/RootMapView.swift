@@ -15,6 +15,7 @@ enum ActiveSheet: Identifiable, Equatable {
     case addLog
     case profile // 個人頁面
     case friendsList // 好友列表
+    case friendPlace(Place, Int) // place + userId
     
     var id: String {
         switch self {
@@ -22,6 +23,7 @@ enum ActiveSheet: Identifiable, Equatable {
         case .addLog:       return "addLog"
         case .profile:      return "profile" // 個人頁面
         case .friendsList:  return "friendsList" // 好友列表
+        case .friendPlace(let p, let uid): return "friendPlace-\(p.id)-\(uid)"
         }
     }
 }
@@ -36,6 +38,11 @@ struct RootMapView: View {
     @State private var activeSheet: ActiveSheet?
     @State private var searchText: String = ""
     @FocusState private var isSearchFocused: Bool
+    
+    // friend-place selector
+    @State private var friendSelectPlace: Place? = nil
+    @State private var friendSelectFriends: [Friend] = []
+    @State private var isShowingFriendSelector: Bool = false
 
     @SceneStorage("selectedMapTab") private var selectedTab: Int = MapTab.mine.rawValue
 
@@ -79,6 +86,10 @@ struct RootMapView: View {
                         FriendsListView()
                             .environmentObject(vm)
                             .presentationDetents(Set([.large]))
+                    case .friendPlace(let place, let userId):
+                        PlaceSheetView(place: place, mode: .onlyUser(userId: userId))
+                            .environmentObject(vm)
+                            .presentationDetents(Set([.medium, .large]))
                     }
                 }
                 .onChange(of: selectedTab) { newValue in
@@ -119,20 +130,77 @@ struct RootMapView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                let pins: [Place] = {
-                    if selectedTab == MapTab.mine.rawValue {
-                        return vm.myPlaces
-                    } else if selectedTab == MapTab.friends.rawValue {
-                        return vm.friendPlaces
-                    } else {
-                        return vm.communityPlaces
-                    }
-                }()
+                if selectedTab == MapTab.friends.rawValue {
+                    // For friend tab: show friend's avatar at places they've posted
+                    let pairs: [(place: Place, friend: Friend)] = {
+                        var out: [(Place, Friend)] = []
+                        let allPlaces = vm.communityPlaces + vm.myPlaces
+                        for friend in FollowStore.shared.friends {
+                            let posts = vm.userPostsCache[friend.userId] ?? []
+                            let placeIds = Set(posts.map { $0.placeServerId })
+                            for pid in placeIds {
+                                if let place = allPlaces.first(where: { $0.serverId == pid }) {
+                                    out.append((place, friend))
+                                }
+                            }
+                        }
+                        return out
+                    }()
 
-                ForEach(pins, id: \.id) { place in
-                    Annotation(place.name, coordinate: place.coordinate.cl) {
-                        GlassPin(icon: place.type.iconName, color: place.type.color)
-                            .onTapGesture { activeSheet = .place(place) }
+                    let pairsByPlace = Dictionary(grouping: pairs, by: { $0.place.serverId })
+
+                    ForEach(pairsByPlace.keys.sorted(), id: \.self) { pid in
+                        if let group = pairsByPlace[pid], let place = group.first?.place {
+                            let friends = group.map { $0.friend }
+                            Annotation("\(place.name)-\(pid)", coordinate: place.coordinate.cl) {
+                                ZStack {
+                                    // stacked avatars (up to 3) with offsets
+                                    HStack(spacing: -8) {
+                                        ForEach(Array(friends.prefix(3)).indices, id: \.self) { i in
+                                            let f = friends[i]
+                                            Text(FriendAvatarPool.emoji(for: f.avatarId))
+                                                .font(.caption)
+                                                .frame(width: 34, height: 34)
+                                                .background(.ultraThinMaterial, in: Circle())
+                                                .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
+                                                .shadow(radius: 2)
+                                        }
+                                        if friends.count > 3 {
+                                            Text("+\(friends.count - 3)")
+                                                .font(.caption2)
+                                                .frame(width: 34, height: 34)
+                                                .background(.thinMaterial, in: Circle())
+                                                .shadow(radius: 2)
+                                        }
+                                    }
+
+                                }
+                                .onTapGesture {
+                                    if friends.count == 1 {
+                                        activeSheet = .friendPlace(place, friends[0].userId)
+                                    } else {
+                                        friendSelectPlace = place
+                                        friendSelectFriends = friends
+                                        isShowingFriendSelector = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let pins: [Place] = {
+                        if selectedTab == MapTab.mine.rawValue {
+                            return vm.myPlaces
+                        } else {
+                            return vm.communityPlaces
+                        }
+                    }()
+
+                    ForEach(pins, id: \.id) { place in
+                        Annotation(place.name, coordinate: place.coordinate.cl) {
+                            GlassPin(icon: place.type.iconName, color: place.type.color)
+                                .onTapGesture { activeSheet = .place(place) }
+                        }
                     }
                 }
             }
@@ -273,6 +341,21 @@ struct RootMapView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(maxHeight: .infinity, alignment: .topLeading)
+
+            // friend selector dialog when multiple friends share the same place
+            .confirmationDialog("查看哪位好友的貼文？", isPresented: $isShowingFriendSelector, titleVisibility: .visible) {
+                if let place = friendSelectPlace {
+                    ForEach(friendSelectFriends, id: \.userId) { f in
+                        Button(f.displayName ?? "User #\(f.userId)") {
+                            activeSheet = .friendPlace(place, f.userId)
+                        }
+                    }
+                }
+                Button("取消", role: .cancel) {
+                    friendSelectPlace = nil
+                    friendSelectFriends = []
+                }
+            }
 
                 // 右下角定位按鈕
                 VStack(spacing: 10) {
