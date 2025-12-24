@@ -141,6 +141,17 @@ struct PlaceSheetView: View {
                     Text("by \(log.authorName)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    
+                    // 優先顯示拍攝時間，次要顯示發文時間
+                    if let photoTime = log.photoTakenTime {
+                        Text(formatDate(photoTime))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        Text(formatDate(log.createdAt))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
 
                     if isFollowed {
                         Text("已追蹤")
@@ -157,7 +168,7 @@ struct PlaceSheetView: View {
 
             logPhotoPreview(log)
 
-            Text(log.content)
+            Text(log.displayContent)
                 .lineLimit(3)
                 .foregroundStyle(.secondary)
 
@@ -230,6 +241,35 @@ struct PlaceSheetView: View {
             }
             logs = posts
         }
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let now = Date()
+        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: date, to: now)
+        
+        // 不超過1分鐘
+        if components.minute! < 1 && components.hour! == 0 && components.day! == 0 {
+            return "剛剛"
+        }
+        // 不超過1小時
+        if components.hour! < 1 && components.day! == 0 {
+            return "\(components.minute!)分鐘前"
+        }
+        // 不超過24小時
+        if components.day! < 1 {
+            return "\(components.hour!)小時前"
+        }
+        // 不超過7天
+        if components.day! < 7 {
+            return "\(components.day!)天前"
+        }
+        
+        // 超過7天，顯示完整日期
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "zh_TW")
+        return formatter.string(from: date)
     }
 }
 

@@ -109,6 +109,16 @@ struct LogItem: Identifiable, Codable, Hashable {
 
     // SwiftUI identity
     var id: Int { serverId }
+    
+    // 計算屬性：從 content 中提取拍攝時間
+    var photoTakenTime: Date? {
+        PostContent.parse(content).photoTakenTime
+    }
+    
+    // 計算屬性：返回不含時間標記的純文本內容
+    var displayContent: String {
+        PostContent.parse(content).text
+    }
 }
 
 struct CommentItem: Identifiable, Codable, Hashable {

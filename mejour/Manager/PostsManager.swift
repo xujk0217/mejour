@@ -27,7 +27,8 @@ final class PostsManager: ObservableObject {
         visibility: APIVisibility,
         photoData: Data?,
         photoFilename: String = "photo.jpg",
-        photoMimeType: String = "image/jpeg"
+        photoMimeType: String = "image/jpeg",
+        takenAt: Date? = nil
     ) async -> LogItem? {
 
         isLoading = true
@@ -35,10 +36,13 @@ final class PostsManager: ObservableObject {
         defer { isLoading = false }
 
         do {
+            // 將拍攝時間編碼進 body 內容
+            let finalBody = PostContent.encode(photoTakenTime: takenAt, text: bodyText)
+            
             var form = MultipartFormData()
-            form.addText(name: "place_id", value: "\(placeId)")   // ⚠️ 你文件寫 place-id，但後端多半是 place_id
+            form.addText(name: "place_id", value: "\(placeId)")
             form.addText(name: "title", value: title)
-            form.addText(name: "body", value: bodyText)
+            form.addText(name: "body", value: finalBody)
             form.addText(name: "visibility", value: visibility.rawValue)
 
             if let photoData {

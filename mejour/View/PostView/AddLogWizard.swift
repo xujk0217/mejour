@@ -22,6 +22,7 @@ struct AddLogWizard: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var photoData: Data?
     @State private var detectedCoord: CLLocationCoordinate2D?
+    @State private var photoTakenTime: Date?  // 照片拍攝時間（從 EXIF）
 
     // Step 2
     @State private var candidates: [Place] = []
@@ -325,7 +326,8 @@ struct AddLogWizard: View {
                 title: title,
                 bodyText: content,
                 visibility: isPublic ? .public : .private,
-                photoData: photoData
+                photoData: photoData,
+                takenAt: photoTakenTime ?? .now  // 傳遞照片拍攝時間（或當前時間）
             ) else {
                 throw NSError(
                     domain: "PostError",
@@ -373,24 +375,44 @@ struct AddLogWizard: View {
     private func reloadPhotoLocally() async {
         var exifCoord: CLLocationCoordinate2D? = nil
         var dataOut: Data? = nil
+        var photoTime: Date? = nil
 
         if let item = photoItem, let data = try? await item.loadTransferable(type: Data.self) {
             dataOut = data
             if let src = CGImageSourceCreateWithData(data as CFData, nil),
-               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-               let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any],
-               let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
-               let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
-                exifCoord = .init(latitude: lat, longitude: lon)
+               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
+                
+                // 提取 GPS 座標
+                if let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any],
+                   let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
+                   let lon = gps[kCGImagePropertyGPSLongitude] as? Double {
+                    exifCoord = .init(latitude: lat, longitude: lon)
+                }
+                
+                // 提取拍攝時間（Exif 或 TIFF）
+                if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any],
+                   let dateStr = exif[kCGImagePropertyExifDateTimeOriginal] as? String {
+                    photoTime = parseExifDate(dateStr)
+                } else if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any],
+                          let dateStr = tiff[kCGImagePropertyTIFFDateTime] as? String {
+                    photoTime = parseExifDate(dateStr)
+                }
             }
         }
 
         await MainActor.run {
             self.photoData = dataOut
             self.detectedCoord = exifCoord ?? vm.locationManager.location?.coordinate
+            self.photoTakenTime = photoTime  // 設定照片拍攝時間
         }
     }
 
+    // EXIF 時間格式解析：通常是 "YYYY:MM:DD HH:MM:SS"
+    private func parseExifDate(_ dateString: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter.date(from: dateString)
+    }
     // MARK: - Helpers
 
     private func normalized(_ tags: [String]) -> [String] {
