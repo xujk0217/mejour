@@ -76,6 +76,13 @@ private extension ProfileSheetView {
             Text(displayNameText)
                 .font(.headline)
 
+            // 顯示使用者 id
+            if let me = auth.currentUser {
+                Text("ID: \(me.id)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack(spacing: 24) {
                 statItem(title: "探索地點", value: placeCountText)
                 statItem(title: "發文數", value: "\(myPosts.count)")
@@ -212,16 +219,43 @@ private extension ProfileSheetView {
     var postListView: some View {
         ScrollView {
             VStack(spacing: 12) {
-                ForEach(currentPosts) { post in
-                    NavigationLink {
-                        LogDetailView(postId: post.serverId)
-                    } label: {
-                        postRow(post)
+                // 我的貼文分組顯示（依日期）
+                if selectedTab == .mine {
+                    let groups = groupedPosts(myPosts)
+                    ForEach(groups.indices, id: \.self) { idx in
+                        let group = groups[idx]
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(shortDateTitle(group.date))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
+                            VStack(spacing: 8) {
+                                ForEach(group.posts) { post in
+                                    NavigationLink {
+                                        LogDetailView(postId: post.serverId)
+                                    } label: {
+                                        postRow(post)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
                     }
-                    .buttonStyle(.plain)
+                } else {
+                    ForEach(currentPosts) { post in
+                        NavigationLink {
+                            LogDetailView(postId: post.serverId)
+                        } label: {
+                            postRow(post)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .padding(.top, 8)
+        }
+        .refreshable {
+            await loadData(forceRefresh: true)
         }
     }
 
@@ -230,7 +264,8 @@ private extension ProfileSheetView {
             Text(log.title)
                 .font(.headline)
 
-            Text(log.content)
+            // 顯示已移除時間標記的內容
+            Text(log.displayContent)
                 .lineLimit(2)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -262,7 +297,7 @@ private extension ProfileSheetView {
 private extension ProfileSheetView {
 
     @MainActor
-    func loadData() async {
+    func loadData(forceRefresh: Bool = false) async {
         errorText = nil
         isLoading = true
         defer { isLoading = false }
@@ -276,11 +311,53 @@ private extension ProfileSheetView {
         }
 
         // ✅ 我的貼文：你已經有 API
-        myPosts = await PostsManager.shared.fetchPostsByUser(userId: me.id)
+        myPosts = await PostsManager.shared.fetchPostsByUser(userId: me.id, forceRefresh: forceRefresh)
 
         // ⚠️ 愛心 / 收藏：你目前沒給 API → 先空
         likedPosts = []
         savedPosts = []
+    }
+
+    // MARK: - Helpers for grouping and formatting
+    func groupedPosts(_ posts: [LogItem]) -> [(date: Date?, posts: [LogItem])] {
+        let cal = Calendar.current
+        var dict: [Date: [LogItem]] = [:]
+        var unknown: [LogItem] = []
+        for p in posts {
+            // 優先使用 photoTakenTime，再 fallback 到 createdAt；若兩者皆無則歸為 unknown
+            if let d = p.photoTakenTime ?? p.createdAt as Date? {
+                let key = cal.startOfDay(for: d)
+                dict[key, default: []].append(p)
+            } else {
+                unknown.append(p)
+            }
+        }
+        // sort posts within each day by time desc
+        var arr = dict.map { (date: $0.key as Date?, posts: $0.value.sorted { (a, b) in
+            let at = a.photoTakenTime ?? a.createdAt
+            let bt = b.photoTakenTime ?? b.createdAt
+            return at > bt
+        }) }
+        // sort days desc (non-nil first)
+        arr.sort { (l, r) in
+            guard let ld = l.date else { return false }
+            guard let rd = r.date else { return true }
+            return ld > rd
+        }
+        var result: [(Date?, [LogItem])] = arr.map { ($0.date, $0.posts) }
+        if !unknown.isEmpty {
+            result.append((nil, unknown))
+        }
+        return result
+    }
+
+    func shortDateTitle(_ date: Date?) -> String {
+        guard let date else { return "時間未知" }
+        let fm = DateFormatter()
+        fm.locale = Locale(identifier: "zh_TW")
+        fm.dateStyle = .medium
+        fm.timeStyle = .none
+        return fm.string(from: date)
     }
 }
 

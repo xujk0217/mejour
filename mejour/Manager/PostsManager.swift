@@ -18,6 +18,10 @@ final class PostsManager: ObservableObject {
     private let baseURL = URL(string: "https://meejing-backend.vercel.app")!
 
     private init() {}
+    
+    // Simple in-memory cache for posts by user
+    private let postsCacheTTL: TimeInterval = 60 * 5 // 5 minutes
+    private var cachedPostsByUser: [Int: (posts: [LogItem], fetchedAt: Date)] = [:]
 
     // MARK: - 4) 新增 Post（multipart/form-data）
     func createPost(
@@ -116,10 +120,17 @@ final class PostsManager: ObservableObject {
     }
 
     // MARK: - 8) 取得 post 透過 user id（回傳 array）
-    func fetchPostsByUser(userId: Int) async -> [LogItem] {
+    func fetchPostsByUser(userId: Int, forceRefresh: Bool = false) async -> [LogItem] {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+
+        // return cached if fresh
+        if !forceRefresh, let entry = cachedPostsByUser[userId] {
+            if Date().timeIntervalSince(entry.fetchedAt) < postsCacheTTL {
+                return entry.posts
+            }
+        }
 
         do {
             let apis: [APIPost] = try await authedRequest(
@@ -128,7 +139,9 @@ final class PostsManager: ObservableObject {
                 contentType: nil,
                 body: nil
             )
-            return apis.compactMap(LogItem.init(api:))
+            let mapped = apis.compactMap(LogItem.init(api:))
+            cachedPostsByUser[userId] = (posts: mapped, fetchedAt: Date())
+            return mapped
         } catch {
             errorMessage = error.localizedDescription
             return []
