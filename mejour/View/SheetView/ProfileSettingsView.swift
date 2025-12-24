@@ -16,8 +16,6 @@ struct ProfileSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showAuthSheet = false
-    @State private var followIdText = ""
-    @State private var followError: String?
 
     var onNeedAuth: () -> Void
 
@@ -31,38 +29,6 @@ struct ProfileSettingsView: View {
                         row(key: "Email", value: me.email)
                     } else {
                         Text("未登入").foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("追蹤") {
-                    HStack(spacing: 8) {
-                        TextField("輸入 userId（Int）", text: $followIdText)
-                            .keyboardType(.numberPad)
-
-                        Button("追蹤") { submitFollow() }
-                            .buttonStyle(.bordered)
-                    }
-
-                    if let followError, !followError.isEmpty {
-                        Text(followError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section("追蹤名單") {
-                    if follow.ids.isEmpty {
-                        Text("你目前沒有追蹤任何人")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(follow.ids, id: \.self) { id in
-                            NavigationLink {
-                                FriendProfileView(userId: id)
-                            } label: {
-                                Text("User #\(id)")
-                            }
-                        }
-                        .onDelete(perform: deleteFollows) // ✅ 用函數，不要用 $follow.remove
                     }
                 }
 
@@ -97,24 +63,6 @@ struct ProfileSettingsView: View {
                     onNeedAuth()
                 }
             }
-        }
-    }
-
-    private func submitFollow() {
-        followError = nil
-        let t = followIdText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let id = Int(t), id > 0 else {
-            followError = "userId 必須是正整數"
-            return
-        }
-        follow.add(id)         // ✅ 不要 $follow.add
-        followIdText = ""
-    }
-
-    private func deleteFollows(_ indexSet: IndexSet) {
-        let ids = follow.ids
-        for i in indexSet {
-            follow.remove(ids[i])  // ✅ 不要 $follow.remove
         }
     }
 

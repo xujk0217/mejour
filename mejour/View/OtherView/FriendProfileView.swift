@@ -36,6 +36,14 @@ struct FriendProfileView: View {
     private var isMe: Bool {
         AuthManager.shared.currentUser?.id == userId
     }
+    
+    // ✅ 好友的顯示名稱（優先使用 local cache）
+    private var friendDisplayName: String {
+        if let f = follow.friend(for: userId), let name = f.displayName, !name.isEmpty {
+            return name
+        }
+        return "User #\(userId)"
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -66,19 +74,25 @@ struct FriendProfileView: View {
                 }
             }
 
-            Image(systemName: "person.crop.circle.fill")
-                .resizable()
+            // 好友頭像（使用 emoji）
+            let friend = follow.friend(for: userId)
+            Text(FriendAvatarPool.emoji(for: friend?.avatarId))
+                .font(.system(size: 48))
                 .frame(width: 72, height: 72)
-                .foregroundStyle(.secondary)
+                .background(.thinMaterial, in: Circle())
 
             HStack(spacing: 8) {
-                Text("User #\(userId)")
+                Text(friendDisplayName)
                     .font(.headline)
 
                 if isFollowed {
                     followedBadge
                 }
             }
+            
+            Text("ID: \(userId)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             HStack(spacing: 24) {
                 statItem(title: "探索地點", value: "\(friendExploredPlaces.count)")

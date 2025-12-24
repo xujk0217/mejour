@@ -11,34 +11,48 @@ import Foundation
 final class FollowStore: ObservableObject {
     static let shared = FollowStore()
 
-    @Published private(set) var ids: [Int] = []
+    @Published private(set) var friends: [Friend] = []
 
-    private let key = "follow.userIds"
+    private let key = "follow.friends"
 
     private init() {
-        if let arr = UserDefaults.standard.array(forKey: key) as? [Int] {
-            self.ids = arr
+        // Try to decode Friend array
+        if let data = UserDefaults.standard.data(forKey: key) {
+            if let decoded = try? JSONDecoder().decode([Friend].self, from: data) {
+                self.friends = decoded
+                return
+            }
         }
+        self.friends = []
     }
 
-    func add(_ id: Int) {
-        guard id > 0 else { return }
-        if !ids.contains(id) {
-            ids.append(id)
+    func add(_ userId: Int, displayName: String? = nil) {
+        guard userId > 0 else { return }
+        if !friends.contains(where: { $0.userId == userId }) {
+            let avatarId = FriendAvatarPool.randomAvatarId()
+            friends.append(Friend(userId: userId, avatarId: avatarId, displayName: displayName))
             persist()
         }
     }
 
-    func remove(_ id: Int) {
-        ids.removeAll { $0 == id }
+    func remove(_ userId: Int) {
+        friends.removeAll { $0.userId == userId }
         persist()
     }
 
-    func contains(_ id: Int) -> Bool {
-        ids.contains(id)
+    func contains(_ userId: Int) -> Bool {
+        friends.contains(where: { $0.userId == userId })
     }
+    
+    func friend(for userId: Int) -> Friend? {
+        friends.first(where: { $0.userId == userId })
+    }
+    
+    var ids: [Int] { friends.map(\.userId) }
 
     private func persist() {
-        UserDefaults.standard.set(ids, forKey: key)
+        if let data = try? JSONEncoder().encode(friends) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
     }
 }

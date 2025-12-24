@@ -29,7 +29,8 @@ struct LogDetailView: View {
                     
                     HStack(spacing: 12) {
                         NavigationLink {
-                            FriendProfileView(userId: log.authorServerId)
+                            // 使用 sheet-style FriendProfileSheetView（不依賴 MapViewModel 環境物件）
+                            FriendProfileSheetView(userId: log.authorServerId, displayName: log.authorName)
                         } label: {
                             Text("by \(log.authorName)")
                                 .foregroundStyle(.secondary)

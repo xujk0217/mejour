@@ -14,12 +14,14 @@ enum ActiveSheet: Identifiable, Equatable {
     case place(Place)
     case addLog
     case profile // 個人頁面
+    case friendsList // 好友列表
     
     var id: String {
         switch self {
         case .place(let p): return "place-\(p.id)"
         case .addLog:       return "addLog"
         case .profile:      return "profile" // 個人頁面
+        case .friendsList:  return "friendsList" // 好友列表
         }
     }
 }
@@ -71,6 +73,10 @@ struct RootMapView: View {
                             .presentationDetents(Set([.large]))
                     case .profile: // 個人頁面
                         ProfileSheetView()
+                            .environmentObject(vm)
+                            .presentationDetents(Set([.large]))
+                    case .friendsList: // 好友列表
+                        FriendsListView()
                             .environmentObject(vm)
                             .presentationDetents(Set([.large]))
                     }
@@ -165,17 +171,34 @@ struct RootMapView: View {
                 // 頂部工具列：左加號、中搜尋、右個人 + 搜尋結果列表
                 VStack(spacing: 0) {
                     HStack(spacing: 12) {
-                        // 左：加號按鈕
-                        Button {
-                            activeSheet = .addLog
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 18, weight: .bold))
+                        // 左：根據 tab 顯示不同按鈕（個人=加號、朋友=好友列表、社群=空白占位）
+                        if selectedTab == MapTab.mine.rawValue {
+                            Button {
+                                activeSheet = .addLog
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .frame(width: 40, height: 40)
+                                    .background(.ultraThinMaterial, in: Circle())
+                                    .overlay(Circle().stroke(.white.opacity(0.25)))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        } else if selectedTab == MapTab.friends.rawValue {
+                            Button {
+                                activeSheet = .friendsList
+                            } label: {
+                                Image(systemName: "person.2.fill")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .frame(width: 40, height: 40)
+                                    .background(.ultraThinMaterial, in: Circle())
+                                    .overlay(Circle().stroke(.white.opacity(0.25)))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        } else {
+                            // 社群：保留空位，不顯示圈圈
+                            Color.clear
                                 .frame(width: 40, height: 40)
-                                .background(.ultraThinMaterial, in: Circle())
-                                .overlay(Circle().stroke(.white.opacity(0.25)))
                         }
-                        .buttonStyle(PlainButtonStyle())
 
                         // 中：搜尋條
                         HStack(spacing: 8) {
