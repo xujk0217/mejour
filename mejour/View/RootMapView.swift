@@ -52,6 +52,8 @@ struct RootMapView: View {
     @State private var isLoadingRandom = false
     @State private var randomError: String?
     @State private var placeSheetDetent: PresentationDetent = .medium
+    @State private var hasCenteredOnUser = false
+    @State private var didFinishInitialPlacesLoad = false
 
     @SceneStorage("selectedMapTab") private var selectedTab: Int = MapTab.mine.rawValue
 
@@ -155,6 +157,17 @@ struct RootMapView: View {
                         Task { await vm.loadFollowedUsersPosts() }
                     }
                 }
+                .onChange(of: vm.isLoadingPlaces) { loading in
+                    if !loading {
+                        didFinishInitialPlacesLoad = true
+                    }
+                }
+                .onChange(of: vm.userCoordinate?.latitude) { _ in
+                    if !hasCenteredOnUser, let coord = vm.userCoordinate {
+                        vm.setCamera(to: coord, animated: false)
+                        hasCenteredOnUser = true
+                    }
+                }
             } else {
                 // 未登入：顯示登入頁面
                 LoginOverlayView(auth: auth)
@@ -253,7 +266,8 @@ struct RootMapView: View {
             }
             
             // 登入與載入狀態指示器（浮動卡片，中心放大）
-            if auth.isLoading || vm.isLoadingPlaces || isLoadingRandom {
+            let shouldShowPlacesLoading = vm.isLoadingPlaces && !didFinishInitialPlacesLoad
+            if auth.isLoading || shouldShowPlacesLoading || isLoadingRandom {
                 VStack(spacing: 16) {
                     ProgressView()
                         .scaleEffect(1.5, anchor: .center)
@@ -263,7 +277,7 @@ struct RootMapView: View {
                                 .font(.headline)
                                 .fontWeight(.semibold)
                         }
-                        if vm.isLoadingPlaces {
+                        if shouldShowPlacesLoading {
                             Text("載入地圖資料中…")
                                 .font(.headline)
                                 .fontWeight(.semibold)
@@ -374,6 +388,10 @@ struct RootMapView: View {
                                 
                                 ForEach(resultsToShow, id: \.id) { place in
                                     Button {
+                                        isSearchFocused = false
+                                        searchText = ""
+                                        vm.setCamera(to: place.coordinate.cl, animated: true)
+                                        vm.selectedPlace = place
                                         activeSheet = .place(place)
                                     } label: {
                                         HStack(spacing: 10) {
