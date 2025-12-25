@@ -91,25 +91,23 @@ struct AddLogWizard: View {
     // MARK: - UI blocks
 
     private var photoSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let square: CGFloat = min(UIScreen.main.bounds.width - 48, 360)
+
+        return VStack(alignment: .leading, spacing: 8) {
             Text("照片").font(.headline)
 
             PhotosPicker(selection: $photoItem, matching: .images) {
-                ZStack {
+                ZStack(alignment: .bottomTrailing) {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(.thinMaterial)
-                        .frame(maxWidth: .infinity)
-                        .aspectRatio(1, contentMode: .fit)
                         .overlay(
                             Group {
                                 if let data = photoData, let ui = UIImage(data: data) {
                                     Image(uiImage: ui)
                                         .resizable()
                                         .scaledToFill()
-                                        .frame(maxWidth: .infinity)
-                                        .aspectRatio(1, contentMode: .fit)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                                         .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 16))
                                 } else {
                                     VStack(spacing: 8) {
                                         Image(systemName: "plus")
@@ -122,18 +120,17 @@ struct AddLogWizard: View {
                             }
                         )
 
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            Label(photoData == nil ? "選擇照片" : "重新選擇", systemImage: "photo")
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .padding(10)
-                        }
-                    }
+                    Label(photoData == nil ? "選擇照片" : "重新選擇", systemImage: "photo")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(10)
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: square)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .clipped()
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -236,20 +233,6 @@ struct AddLogWizard: View {
                 .frame(minHeight: 160)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 10).strokeBorder(.gray.opacity(0.2)))
-
-            if let data = photoData, let ui = UIImage(data: data) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("照片預覽")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Image(uiImage: ui)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: 180)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-            }
         }
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))

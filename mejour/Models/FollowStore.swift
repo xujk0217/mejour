@@ -23,7 +23,12 @@ final class FollowStore: ObservableObject {
                 return
             }
         }
-        self.friends = []
+        // 沒有舊資料時，預設幾個好友
+        let defaults = [10, 11, 12, 13].map {
+            Friend(userId: $0, avatarId: FriendAvatarPool.randomAvatarId(), displayName: "好友\($0)")
+        }
+        self.friends = defaults
+        persist()
     }
 
     func add(_ userId: Int, displayName: String? = nil) {
