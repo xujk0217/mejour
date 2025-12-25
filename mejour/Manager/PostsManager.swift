@@ -32,6 +32,7 @@ final class PostsManager: ObservableObject {
         photoData: Data?,
         photoFilename: String = "photo.jpg",
         photoMimeType: String = "image/jpeg",
+        tags: [String]? = nil,
         takenAt: Date? = nil
     ) async -> LogItem? {
 
@@ -40,8 +41,8 @@ final class PostsManager: ObservableObject {
         defer { isLoading = false }
 
         do {
-            // 將拍攝時間編碼進 body 內容
-            let finalBody = PostContent.encode(photoTakenTime: takenAt, text: bodyText)
+            // 將拍攝時間/標籤編碼進 body 內容
+            let finalBody = PostContent.encode(photoTakenTime: takenAt, tags: tags, text: bodyText)
             
             var form = MultipartFormData()
             form.addText(name: "place_id", value: "\(placeId)")

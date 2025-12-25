@@ -34,7 +34,7 @@ struct LoginOverlayView: View {
     private var loginCard: some View {
         VStack(spacing: 20) {
             VStack(spacing: 8) {
-                Text("登入 Mejour")
+                Text("登入 覓徑")
                     .font(.title2)
                     .fontWeight(.bold)
                 Text("探索和分享你喜歡的地點")

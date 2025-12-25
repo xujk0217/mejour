@@ -129,83 +129,127 @@ struct PlaceSheetView: View {
 
         // ✅ FollowStore 沒 isFollowing，就用 contains
         let isFollowed = (!isMe) && follow.contains(log.authorServerId)
+        let parsed = PostContent.parse(log.content)
+        let tags = parsed.tags
+        let typeColor = place.type.color
 
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(log.title).font(.headline)
+        return NavigationLink {
+            LogDetailView(postId: log.serverId)
+                .environmentObject(vm)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                logPhotoSquare(log)
+                    .frame(width: 96, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
 
-            NavigationLink {
-                FriendProfileView(userId: log.authorServerId)
-                    .environmentObject(vm)
-            } label: {
-                HStack(spacing: 8) {
-                    Text("by \(log.authorName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    
-                    // 優先顯示拍攝時間，次要顯示發文時間
-                    if let photoTime = log.photoTakenTime {
-                        Text(formatDate(photoTime))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Text(formatDate(log.createdAt))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(log.title)
+                            .font(.headline)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+
+                        Spacer()
+
+                        let total = log.likeCount + log.dislikeCount
+                        let diff = log.likeCount - log.dislikeCount
+                        VStack(alignment: .trailing, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "flame.fill")
+                                    .foregroundStyle(.orange)
+                                Text("\(total)")
+                                    .font(.subheadline).bold()
+                            }
+                            Text("(\(diff >= 0 ? "+" : "")\(diff))")
+                                .font(.caption)
+                                .foregroundStyle(diff >= 0 ? .green : .red)
+                        }
                     }
 
-                    if isFollowed {
-                        Text("已追蹤")
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.thinMaterial, in: Capsule())
-                            .overlay(Capsule().stroke(.white.opacity(0.18)))
+                    HStack(spacing: 8) {
+                        authorAvatar(log.authorName)
+                        Text(log.authorName)
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                        if isFollowed {
+                            Text("已追蹤")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.thinMaterial, in: Capsule())
+                                .overlay(Capsule().stroke(.white.opacity(0.18)))
+                        }
+                    }
+
+                    if !tags.isEmpty {
+                        TagPills(tags: tags, tint: typeColor)
                     }
                 }
             }
-            .buttonStyle(.plain)
-
-            logPhotoPreview(log)
-
-            Text(log.displayContent)
-                .lineLimit(3)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                // ✅ 不要用舊的 platformButtonStyle，避免你專案裡衝突
-                Label("\(log.likeCount)", systemImage: "hand.thumbsup")
-                    .buttonStyle(.bordered)
-
-                NavigationLink {
-                    LogDetailView(postId: log.serverId)
-                } label: {
-                    Label("查看全文", systemImage: "chevron.right")
-                }
-                .buttonStyle(.bordered)
-            }
+            .padding(12)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(typeColor.opacity(0.35), lineWidth: 1)
+            )
+            .frame(height: 130, alignment: .center)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
-    private func logPhotoPreview(_ log: LogItem) -> some View {
+    private func logPhotoSquare(_ log: LogItem) -> some View {
         if let urlString = log.photoURL, let url = URL(string: urlString) {
             CachedAsyncImage(url: url) { image in
                 image
                     .resizable()
                     .scaledToFill()
-                    .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 300)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
             } placeholder: {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(.thinMaterial)
-                    .frame(height: 220)
-                    .overlay(ProgressView())
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.thinMaterial)
+                    ProgressView()
+                }
             }
         } else {
-            EmptyView()
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.thinMaterial)
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func authorAvatar(_ name: String) -> some View {
+        let initial = name.first.map { String($0) } ?? "?"
+        return Text(initial)
+            .font(.caption.bold())
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(.ultraThinMaterial))
+            .overlay(Circle().stroke(.white.opacity(0.18)))
+    }
+
+    private struct TagPills: View {
+        let tags: [String]
+        let tint: Color
+
+        var body: some View {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(tags, id: \.self) { tag in
+                        Text(tag)
+                            .font(.caption)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .background(tint.opacity(0.15))
+                            .foregroundStyle(tint)
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(tint.opacity(0.45), lineWidth: 1))
+                    }
+                }
+            }
         }
     }
 

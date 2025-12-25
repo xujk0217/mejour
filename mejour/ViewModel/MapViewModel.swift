@@ -205,6 +205,16 @@ final class MapViewModel: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     @MainActor
+    func upsertMyPost(_ log: LogItem) {
+        if let idx = myPosts.firstIndex(where: { $0.serverId == log.serverId }) {
+            myPosts[idx] = log
+        } else {
+            myPosts.insert(log, at: 0)
+        }
+        exploredPlaceServerIds.insert(log.placeServerId)
+    }
+
+    @MainActor
     func loadMyPostsAndExploredPlaces(force: Bool = false) async {
         guard let me = AuthManager.shared.currentUser else { return }
 

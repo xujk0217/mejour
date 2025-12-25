@@ -15,24 +15,23 @@ import CoreLocation
 struct AddLogWizard: View {
     @ObservedObject var vm: MapViewModel
 
-    enum Step { case photos, choosePlace, compose }
-    @State private var step: Step = .photos
-
-    // Step 1 (正式版：只用 1 張)
+    // Photos
     @State private var photoItem: PhotosPickerItem?
     @State private var photoData: Data?
     @State private var detectedCoord: CLLocationCoordinate2D?
     @State private var photoTakenTime: Date?  // 照片拍攝時間（從 EXIF）
 
-    // Step 2
+    // Place
     @State private var candidates: [Place] = []
     @State private var selectedPlace: Place?
     @State private var creatingNew = false
     @State private var newPlaceName = ""
-    @State private var newPlaceTags: [String] = []
     @State private var newPlaceType: PlaceType = .other
+    @State private var isShowingPlaceSheet = false
 
-    // Step 3
+    // Tags & content
+    @State private var typeTags: [String] = []
+    @State private var vibeTags: [String] = []
     @State private var isPublic = true
     @State private var title = ""
     @State private var content = ""
@@ -44,211 +43,295 @@ struct AddLogWizard: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                switch step {
-                case .photos: photosStep
-                case .choosePlace: choosePlaceStep
-                case .compose: composeStep
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let err = publishError, !err.isEmpty {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 12)
+                    }
+
+                    photoSection
+                    placeSection
+                    tagSection
+                    composeSection
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 32)
             }
             .navigationTitle("新增日誌")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    if step != .photos {
-                        Button("上一步") { goPrev() }
-                            .disabled(isPublishing)
-                    }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("關閉") { dismiss() }
+                        .disabled(isPublishing)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if step == .compose {
-                        Button(isPublishing ? "發佈中…" : "發佈") {
-                            Task { await publish() }
-                        }
-                        .disabled(!canPublish || isPublishing)
-                    } else {
-                        Button("下一步") { goNext() }
-                            .disabled(!canNext || isPublishing)
+                    Button(isPublishing ? "發佈中…" : "發佈") {
+                        Task { await publish() }
                     }
+                    .disabled(!canPublish || isPublishing)
                 }
             }
+            .sheet(isPresented: $isShowingPlaceSheet) { placePickerSheet }
         }
-        .task { await reloadPhotoLocally() }
+        .task {
+            await reloadPhotoLocally()
+            populateCandidates()
+            ensureTypeTagForSelection()
+        }
         .onChange(of: photoItem) { _ in
             Task { await reloadPhotoLocally() }
         }
+        .onChange(of: detectedCoord?.latitude ?? .infinity) { _ in populateCandidates() }
+        .onChange(of: detectedCoord?.longitude ?? .infinity) { _ in populateCandidates() }
+        .onChange(of: newPlaceType) { _ in ensureTypeTagForSelection() }
     }
 
-    // MARK: - Steps
+    // MARK: - UI blocks
 
-    private var photosStep: some View {
-        Form {
-            Section("照片（正式版：單張）") {
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Label(photoData == nil ? "選擇照片" : "重新選擇", systemImage: "photo")
-                }
+    private var photoSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("照片").font(.headline)
 
-                if let data = photoData, let ui = UIImage(data: data) {
-                    Image(uiImage: ui)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: 240)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .padding(.vertical, 6)
-                } else {
-                    Text("尚未選擇照片（可不選，photo 可為空）")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(.thinMaterial)
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay(
+                            Group {
+                                if let data = photoData, let ui = UIImage(data: data) {
+                                    Image(uiImage: ui)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(maxWidth: .infinity)
+                                        .aspectRatio(1, contentMode: .fit)
+                                        .clipped()
+                                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                                } else {
+                                    VStack(spacing: 8) {
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 28, weight: .bold))
+                                        Text("新增照片")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        )
 
-                if let c = detectedCoord {
-                    Text("定位來源：\(photoData == nil ? "GPS" : "EXIF")  (\(String(format: "%.5f", c.latitude)), \(String(format: "%.5f", c.longitude)))")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("尚未取得定位（稍候或開啟定位權限）")
-                        .font(.caption).foregroundStyle(.secondary)
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Label(photoData == nil ? "選擇照片" : "重新選擇", systemImage: "photo")
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(10)
+                        }
+                    }
                 }
             }
+            .buttonStyle(.plain)
 
-            Section {
-                Button("下一步：選擇地點") { goNext() }
-                    .platformButtonStyle()
+            if let c = detectedCoord {
+                Text("定位來源：\(photoData == nil ? "GPS" : "EXIF")  (\(String(format: "%.5f", c.latitude)), \(String(format: "%.5f", c.longitude)))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("尚未取得定位（稍候或開啟定位權限）")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var choosePlaceStep: some View {
-        List {
-            if let err = publishError, !err.isEmpty {
-                Section {
-                    Text(err).foregroundStyle(.red).font(.caption)
+    private var placeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("地點").font(.headline)
+
+            Button {
+                isShowingPlaceSheet = true
+            } label: {
+                HStack(spacing: 12) {
+                    let pinType = selectedPlace?.type ?? newPlaceType
+                    GlassPin(icon: pinType.iconName, color: pinType.color)
+                        .frame(width: 40, height: 40)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        if creatingNew {
+                            Text(newPlaceName.isEmpty ? "自訂地點" : newPlaceName)
+                                .font(.subheadline).bold()
+                            Text("新增 \(localizedTypeName(newPlaceType))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if let place = selectedPlace {
+                            Text(place.name).font(.subheadline).bold()
+                            let tags = place.tags.isEmpty ? [] : place.tags
+                            Text(tags.isEmpty ? localizedTypeName(place.type) : tags.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("選擇地點或自行新增")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var tagSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("標籤").font(.headline)
+            Text("分開紀錄類型與性質，之後可以統計各地點常用標籤。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TagBlock(
+                title: "類型",
+                subtitle: "餐廳、咖啡廳、景點…",
+                systemImage: "square.grid.2x2",
+                tint: .blue.opacity(0.7),
+                tags: $typeTags,
+                presetTags: typePresetTags()
+            )
+
+            TagBlock(
+                title: "性質 / 氛圍",
+                subtitle: "適合讀書、家庭、約會…",
+                systemImage: "sparkles",
+                tint: .pink.opacity(0.7),
+                tags: $vibeTags,
+                presetTags: vibePresetTags()
+            )
+        }
+    }
+
+    private var composeSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("貼文內容").font(.headline)
+                Spacer()
+                Toggle("公開到社群", isOn: $isPublic)
+                    .labelsHidden()
             }
 
-            if !creatingNew {
+            TextField("標題", text: $title)
+                .textFieldStyle(.roundedBorder)
+
+            TextEditor(text: $content)
+                .frame(minHeight: 160)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 10).strokeBorder(.gray.opacity(0.2)))
+
+            if let data = photoData, let ui = UIImage(data: data) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("照片預覽")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Image(uiImage: ui)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 180)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+        .padding(12)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var placePickerSheet: some View {
+        NavigationStack {
+            List {
                 Section {
-                    Button { creatingNew = true } label: {
+                    Button {
+                        creatingNew = true
+                        selectedPlace = nil
+                    } label: {
                         Label("建立新地點", systemImage: "mappin.and.ellipse")
                     }
                 }
-            }
 
-            if creatingNew {
-                Section("新地點資訊") {
-                    TextField("地點名稱", text: $newPlaceName)
+                if creatingNew {
+                    Section("新地點資訊") {
+                        TextField("地點名稱", text: $newPlaceName)
 
-                    Picker("類型", selection: $newPlaceType) {
-                        ForEach(PlaceType.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                        Picker("類型", selection: $newPlaceType) {
+                            ForEach(PlaceType.allCases) { type in
+                                Text(localizedTypeName(type)).tag(type)
+                            }
+                        }
                     }
-
-                    TagEditor(
-                        title: "標籤",
-                        tags: $newPlaceTags,
-                        presetTags: defaultPresetTags(for: newPlaceType)
-                    )
                 }
-            }
 
-            Section("附近的地點") {
-                if candidates.isEmpty {
-                    Text("找不到附近地點，可建立新地點")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(candidates, id: \.id) { p in
-                        Button {
-                            selectedPlace = p
-                            creatingNew = false
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: p.type.iconName)
-                                VStack(alignment: .leading) {
-                                    Text(p.name).bold()
-                                    if !p.tags.isEmpty {
-                                        Text(p.tags.joined(separator: " · "))
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    } else {
-                                        Text("無標籤").font(.caption).foregroundStyle(.tertiary)
+                Section("附近的地點") {
+                    if candidates.isEmpty {
+                        Text("找不到附近地點，可建立新地點")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(candidates, id: \.id) { p in
+                            Button {
+                                selectedPlace = p
+                                creatingNew = false
+                                newPlaceType = p.type
+                                ensureTypeTagForSelection(from: p)
+                                prefillTags(from: p)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: p.type.iconName)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(p.name).bold()
+                                        if !p.tags.isEmpty {
+                                            Text(p.tags.joined(separator: " · "))
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        } else {
+                                            Text(localizedTypeName(p.type))
+                                                .font(.caption).foregroundStyle(.tertiary)
+                                        }
                                     }
+                                    Spacer()
+                                    if selectedPlace?.id == p.id { Image(systemName: "checkmark.circle.fill") }
                                 }
-                                Spacer()
-                                if selectedPlace?.id == p.id { Image(systemName: "checkmark.circle.fill") }
                             }
                         }
                     }
                 }
             }
-        }
-        .onAppear(perform: populateCandidates)
-        .onChange(of: detectedCoord?.latitude ?? .infinity) { _ in populateCandidates() }
-        .onChange(of: detectedCoord?.longitude ?? .infinity) { _ in populateCandidates() }
-    }
-
-    private var composeStep: some View {
-        Form {
-            if let err = publishError, !err.isEmpty {
-                Section {
-                    Text(err).foregroundStyle(.red).font(.caption)
+            .navigationTitle("選擇地點")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { isShowingPlaceSheet = false }
                 }
             }
-
-            Section {
-                Toggle("公開到社群", isOn: $isPublic)
-            }
-
-            Section {
-                TextField("標題", text: $title)
-                TextEditor(text: $content).frame(minHeight: 160)
-            }
-
-            if let data = photoData, let ui = UIImage(data: data) {
-                Section("預覽照片") {
-                    Image(uiImage: ui)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: 240)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-            }
+            .onAppear(perform: populateCandidates)
         }
     }
 
-    // MARK: - Navigation logic
-
-    private var canNext: Bool {
-        switch step {
-        case .photos:
-            return true
-        case .choosePlace:
-            return (selectedPlace != nil) || creatingNew
-        case .compose:
-            return false
-        }
-    }
+    // MARK: - Computed
 
     private var canPublish: Bool {
+        hasPlaceSelection &&
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        (selectedPlace != nil || creatingNew)
+        !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func goNext() {
-        switch step {
-        case .photos:
-            step = .choosePlace
-        case .choosePlace:
-            step = .compose
-        case .compose:
-            break
-        }
-    }
-
-    private func goPrev() {
-        switch step {
-        case .photos: break
-        case .choosePlace: step = .photos
-        case .compose: step = .choosePlace
-        }
+    private var hasPlaceSelection: Bool {
+        (selectedPlace != nil) || creatingNew
     }
 
     // MARK: - Candidates
@@ -296,7 +379,7 @@ struct AddLogWizard: View {
                     coordinate: coord,
                     isPublic: isPublic,
                     type: newPlaceType,
-                    tags: normalized(newPlaceTags),
+                    tags: normalized(allSelectedTags()),
                     dedupRadiusMeters: 30
                 )
             } else if let picked = selectedPlace {
@@ -310,7 +393,7 @@ struct AddLogWizard: View {
                         coordinate: picked.coordinate.cl,
                         isPublic: isPublic,
                         type: picked.type,
-                        tags: picked.tags,
+                        tags: normalized(allSelectedTags(existingPlace: picked)),
                         dedupRadiusMeters: 30
                     )
                 } else {
@@ -327,6 +410,7 @@ struct AddLogWizard: View {
                 bodyText: content,
                 visibility: isPublic ? .public : .private,
                 photoData: photoData,
+                tags: allSelectedTags(),
                 takenAt: photoTakenTime ?? .now  // 傳遞照片拍攝時間（或當前時間）
             ) else {
                 throw NSError(
@@ -342,19 +426,14 @@ struct AddLogWizard: View {
             }
             vm.logsByPlace[place.serverId]?.insert(created, at: 0)
 
-            // 更新 exploredPlaceServerIds（標記為已探索）
-            var explored = vm.exploredPlaceServerIds
-            explored.insert(place.serverId)
-            vm.exploredPlaceServerIds = explored
-
-            // 更新 myPosts：將新建立的 post 加到個人貼文列表（避免只更新 logsByPlace）
-            var myPosts = vm.myPosts
-            myPosts.insert(created, at: 0)
-            vm.myPosts = myPosts
+            // 更新我的貼文/探索紀錄
+            vm.upsertMyPost(created)
 
             // 若要確保快取時間戳記一致，按需刷新 vm 的快取（會更新 timestamps）
             await vm.loadPosts(for: place, force: true)
             await vm.loadMyPostsAndExploredPlaces(force: true)
+            // 如果後端回傳尚未包含剛新增的貼文，確保本地至少有一份
+            vm.upsertMyPost(created)
 
             // 4) 確保 place 在列表（如果你 vm.getOrCreatePlace 已經 upsert 就不用，但保險）
             if !vm.myPlaces.contains(where: { $0.id == place.id }) {
@@ -430,18 +509,56 @@ struct AddLogWizard: View {
         return out
     }
 
-    private func defaultPresetTags(for type: PlaceType) -> [String] {
+    private func allSelectedTags(existingPlace: Place? = nil) -> [String] {
+        var base = typeTags + vibeTags
+        if let existingPlace { base += existingPlace.tags }
+        return normalized(base)
+    }
+
+    private func ensureTypeTagForSelection(from place: Place? = nil) {
+        let typeName = localizedTypeName(place?.type ?? newPlaceType)
+        let typeNameSet = Set(PlaceType.allCases.map { localizedTypeName($0).lowercased() })
+        typeTags.removeAll { tag in
+            let lower = tag.lowercased()
+            return typeNameSet.contains(lower) && lower != typeName.lowercased()
+        }
+        if !typeTags.contains(where: { $0.caseInsensitiveCompare(typeName) == .orderedSame }) {
+            typeTags.append(typeName)
+        }
+    }
+
+    private func prefillTags(from place: Place) {
+        // 把既有標籤拆成 type/vibe，若無分類則全部視為 vibe
+        let existing = place.tags
+        if existing.isEmpty { return }
+
+        if typeTags.isEmpty {
+            typeTags.append(contentsOf: normalized([localizedTypeName(place.type)]))
+        }
+
+        for tag in existing {
+            if !vibeTags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) &&
+               !typeTags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
+                vibeTags.append(tag)
+            }
+        }
+    }
+
+    private func typePresetTags() -> [String] {
+        ["餐廳", "咖啡廳", "景點", "商店", "其他"]
+    }
+
+    private func vibePresetTags() -> [String] {
+        ["適合讀書", "家庭", "朋友聚會", "甜點", "安靜", "不限時", "插座", "拍照", "約會", "戶外"]
+    }
+
+    private func localizedTypeName(_ type: PlaceType) -> String {
         switch type {
-        case .cafe:
-            return ["咖啡","甜點","插座","安靜","閱讀","不限時","手沖","拿鐵"]
-        case .restaurant:
-            return ["聚餐","小吃","宵夜","排隊","平價","家庭式","米粉湯","湯頭"]
-        case .scenic:
-            return ["散步","綠地","景點","拍照","親子","夕陽","步道","河濱"]
-        case .shop:
-            return ["文具","雜貨","手作","逛街","選物","優惠"]
-        case .other:
-            return ["推薦","常去","乾淨","友善"]
+        case .restaurant: return "餐廳"
+        case .cafe: return "咖啡廳"
+        case .scenic: return "景點"
+        case .shop: return "商店"
+        case .other: return "其他"
         }
     }
 }
@@ -454,13 +571,14 @@ private struct TagEditor: View {
     let title: String
     @Binding var tags: [String]
     var presetTags: [String] = []
+    var showTitle: Bool = true
 
     @State private var input: String = ""
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
+            if showTitle { Text(title) }
 
             HStack(spacing: 8) {
                 TextField("輸入後按加入或換行", text: $input)
@@ -569,5 +687,58 @@ private struct ChipsGrid: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+}
+
+// MARK: - Tag block (card-style)
+
+private struct TagBlock: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+    @Binding var tags: [String]
+    var presetTags: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle().fill(tint.opacity(0.15))
+                    Image(systemName: systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
+                .frame(width: 32, height: 32)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline).bold()
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            TagEditor(
+                title: "",
+                tags: $tags,
+                presetTags: presetTags,
+                showTitle: false
+            )
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [tint.opacity(0.12), tint.opacity(0.04)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(tint.opacity(0.3))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }

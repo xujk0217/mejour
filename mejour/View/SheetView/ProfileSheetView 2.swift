@@ -9,6 +9,7 @@ import SwiftUI
 
 // MARK: - ProfileSheetView
 struct ProfileSheetView: View {
+    @EnvironmentObject private var vm: MapViewModel
 
     enum Tab: String, CaseIterable, Identifiable {
         case mine = "我的"
@@ -233,6 +234,7 @@ private extension ProfileSheetView {
                                 ForEach(group.posts) { post in
                                     NavigationLink {
                                         LogDetailView(postId: post.serverId)
+                                            .environmentObject(vm)
                                     } label: {
                                         postRow(post)
                                     }
@@ -245,6 +247,7 @@ private extension ProfileSheetView {
                     ForEach(currentPosts) { post in
                         NavigationLink {
                             LogDetailView(postId: post.serverId)
+                                .environmentObject(vm)
                         } label: {
                             postRow(post)
                         }

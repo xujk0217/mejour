@@ -12,6 +12,7 @@ import MapKit
 struct FriendProfileSheetView: View {
     let userId: Int
     let displayName: String?
+    @EnvironmentObject private var vm: MapViewModel
 
     enum Tab: String, CaseIterable, Identifiable {
         case posts = "貼文"
@@ -132,6 +133,7 @@ struct FriendProfileSheetView: View {
                         ForEach(posts) { p in
                             NavigationLink {
                                 LogDetailView(postId: p.serverId)
+                                    .environmentObject(vm)
                             } label: {
                                 postRow(p)
                             }

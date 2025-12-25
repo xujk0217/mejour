@@ -16,6 +16,7 @@ enum ActiveSheet: Identifiable, Equatable {
     case profile // 個人頁面
     case friendsList // 好友列表
     case friendPlace(Place, Int) // place + userId
+    case randomFeed(LogItem)
     
     var id: String {
         switch self {
@@ -24,6 +25,7 @@ enum ActiveSheet: Identifiable, Equatable {
         case .profile:      return "profile" // 個人頁面
         case .friendsList:  return "friendsList" // 好友列表
         case .friendPlace(let p, let uid): return "friendPlace-\(p.id)-\(uid)"
+        case .randomFeed(let p): return "randomFeed-\(p.serverId)"
         }
     }
 }
@@ -43,6 +45,12 @@ struct RootMapView: View {
     @State private var friendSelectPlace: Place? = nil
     @State private var friendSelectFriends: [Friend] = []
     @State private var isShowingFriendSelector: Bool = false
+    
+    // 隨機貼文
+    @State private var randomPosts: [LogItem] = []
+    @State private var randomPlaceLookup: [Int: Place] = [:]
+    @State private var isLoadingRandom = false
+    @State private var randomError: String?
 
     @SceneStorage("selectedMapTab") private var selectedTab: Int = MapTab.mine.rawValue
 
@@ -90,6 +98,19 @@ struct RootMapView: View {
                         PlaceSheetView(place: place, mode: .onlyUser(userId: userId))
                             .environmentObject(vm)
                             .presentationDetents(Set([.medium, .large]))
+                    case .randomFeed(let start):
+                        NavigationStack {
+                            RandomLogDetailView(
+                                posts: randomPosts,
+                                startIndex: randomPosts.firstIndex(where: { $0.serverId == start.serverId }) ?? 0,
+                                placeLookup: randomPlaceLookup,
+                                onJumpToPlace: { place in
+                                    vm.setCamera(to: place.coordinate.cl, animated: true)
+                                    activeSheet = .place(place)
+                                }
+                            )
+                        }
+                        .environmentObject(vm)
                     }
                 }
                 .onChange(of: selectedTab) { newValue in
@@ -210,7 +231,7 @@ struct RootMapView: View {
             }
             
             // 登入與載入狀態指示器（浮動卡片，中心放大）
-            if auth.isLoading || vm.isLoadingPlaces {
+            if auth.isLoading || vm.isLoadingPlaces || isLoadingRandom {
                 VStack(spacing: 16) {
                     ProgressView()
                         .scaleEffect(1.5, anchor: .center)
@@ -222,6 +243,11 @@ struct RootMapView: View {
                         }
                         if vm.isLoadingPlaces {
                             Text("載入地圖資料中…")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                        }
+                        if isLoadingRandom {
+                            Text("載入附近貼文…")
                                 .font(.headline)
                                 .fontWeight(.semibold)
                         }
@@ -260,6 +286,24 @@ struct RootMapView: View {
                                     .frame(width: 40, height: 40)
                                     .background(.ultraThinMaterial, in: Circle())
                                     .overlay(Circle().stroke(.white.opacity(0.25)))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        } else if selectedTab == MapTab.everyone.rawValue {
+                            Button {
+                                Task { await loadRandomPosts() }
+                            } label: {
+                                if isLoadingRandom {
+                                    ProgressView()
+                                        .frame(width: 40, height: 40)
+                                        .background(.ultraThinMaterial, in: Circle())
+                                        .overlay(Circle().stroke(.white.opacity(0.25)))
+                                } else {
+                                    Image(systemName: "shuffle")
+                                        .font(.system(size: 18, weight: .bold))
+                                        .frame(width: 40, height: 40)
+                                        .background(.ultraThinMaterial, in: Circle())
+                                        .overlay(Circle().stroke(.white.opacity(0.25)))
+                                }
                             }
                             .buttonStyle(PlainButtonStyle())
                         } else {
@@ -395,6 +439,366 @@ struct RootMapView: View {
         return places.filter { place in
             place.name.localizedCaseInsensitiveContains(searchText) ||
             place.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
+
+    // MARK: - Random posts (直接開滑卡)
+
+    @MainActor
+    private func loadRandomPosts() async {
+        guard !isLoadingRandom else { return }
+        isLoadingRandom = true
+        randomError = nil
+        randomPosts = []
+        randomPlaceLookup = [:]
+        defer { isLoadingRandom = false }
+
+        let center = vm.cameraCenter ?? vm.userCoordinate ?? CLLocationCoordinate2D(latitude: 25.0330, longitude: 121.5654)
+        let nearbyPlaces = vm.nearestPlaces(
+            from: center,
+            source: .community,
+            limit: 40,
+            tagFilter: nil,
+            radiusMeters: 1200
+        )
+
+        var collected: [LogItem] = []
+        var lookup: [Int: Place] = [:]
+        for place in nearbyPlaces {
+            guard place.serverId > 0 else { continue }
+            let posts = await PostsManager.shared.fetchPostsByPlace(placeId: place.serverId)
+            if !posts.isEmpty {
+                lookup[place.serverId] = place
+                collected.append(contentsOf: posts)
+            }
+            if collected.count >= 30 { break }
+        }
+
+        collected.shuffle()
+        collected = Array(collected.prefix(30))
+
+        guard let first = collected.first else {
+            randomError = "附近沒有可顯示的貼文"
+            return
+        }
+
+        randomPosts = collected
+        randomPlaceLookup = lookup
+        activeSheet = .randomFeed(first)
+    }
+}
+
+// MARK: - Random detail (滑動隨機貼文)
+
+private struct RandomLogDetailView: View {
+    let posts: [LogItem]
+    let startIndex: Int
+    let placeLookup: [Int: Place]
+    var onJumpToPlace: (Place) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var vm: MapViewModel
+
+    @State private var current: LogItem?
+    @State private var queue: [LogItem] = []
+    @State private var placeType: PlaceType = .other
+    @State private var placeServerId: Int?
+    @State private var dragOffset: CGSize = .zero
+    private let dragThreshold: CGFloat = 80
+
+    var body: some View {
+        let likeProgress = max(0, min(1, dragOffset.width / (dragThreshold * 1.2)))
+        let dislikeProgress = max(0, min(1, -dragOffset.width / (dragThreshold * 1.2)))
+        let showHints = abs(dragOffset.width) > dragThreshold * 0.6
+
+        return ZStack(alignment: .center) {
+            if let next = queue.dropFirst().first {
+                cardView(next, place: placeLookup[next.placeServerId])
+                    .opacity(0.35)
+                    .offset(x: 40, y: 30)
+                    .id("bg-\(next.serverId)")
+            }
+
+            if let log = current {
+                cardView(log, place: placeLookup[log.placeServerId])
+                    .id(log.serverId)
+                    .offset(dragOffset)
+                    .rotationEffect(.degrees(Double(dragOffset.width / 20)))
+                    .highPriorityGesture(
+                        DragGesture()
+                            .onChanged { value in
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                    dragOffset = value.translation
+                                }
+                            }
+                            .onEnded { value in
+                                let dx = value.translation.width
+                                if dx > dragThreshold {
+                                    Task { await reactAndAdvance("like") }
+                                } else if dx < -dragThreshold {
+                                    Task { await reactAndAdvance("dislike") }
+                                } else {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                        dragOffset = .zero
+                                    }
+                                }
+                            }
+                    )
+            } else {
+                Text("沒有貼文")
+                    .foregroundStyle(.secondary)
+                    .padding()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 24)
+        .navigationTitle("隨機貼文")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .leading) {
+            if showHints && dislikeProgress > 0 {
+                Circle()
+                    .fill(Color.red.opacity(0.18))
+                    .frame(width: 54, height: 54)
+                    .overlay(Image(systemName: "hand.thumbsdown.fill").foregroundStyle(.red))
+                    .padding(.leading, 16)
+                    .opacity(Double(min(dislikeProgress, 1)))
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if showHints && likeProgress > 0 {
+                Circle()
+                    .fill(Color.green.opacity(0.18))
+                    .frame(width: 54, height: 54)
+                    .overlay(Image(systemName: "hand.thumbsup.fill").foregroundStyle(.green))
+                    .padding(.trailing, 16)
+                    .opacity(Double(min(likeProgress, 1)))
+            }
+        }
+        .onAppear {
+            // 以 startIndex 為起點的循環隊列
+            let leading = Array(posts[startIndex...])
+            let trailing = Array(posts.prefix(startIndex))
+            queue = leading + trailing
+            current = queue.first
+            placeServerId = queue.first?.placeServerId
+            Task { await loadPlaceType(for: placeServerId) }
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+            }
+        }
+    }
+
+    private func cardView(_ log: LogItem, place: Place?) -> some View {
+        let parsed = PostContent.parse(log.content)
+        let tags = parsed.tags
+        let color = place?.type.color ?? placeType.color
+        let maxWidth: CGFloat = min(UIScreen.main.bounds.width - 32, 500)
+        let hasPhoto = !(log.photoURL ?? "").isEmpty
+        let photoHeight: CGFloat = 260
+        let contentHeight: CGFloat = 200 + (hasPhoto ? 0 : photoHeight)
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text(log.title)
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Text(formatDate(log.createdAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let urlString = log.photoURL, let url = URL(string: urlString), hasPhoto {
+                CachedAsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: maxWidth)
+                        .frame(maxHeight: photoHeight)
+                        .clipped()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.thinMaterial)
+                        .frame(maxWidth: maxWidth)
+                        .frame(maxHeight: photoHeight)
+                        .overlay(ProgressView())
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+
+            if !tags.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("標籤")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TagPills(tags: tags, tint: color)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("內容")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ScrollView {
+                    Text(log.displayContent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 4)
+                }
+                .frame(minHeight: contentHeight, maxHeight: contentHeight)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 14))
+
+            if let place {
+                Button {
+                    dismiss()
+                    onJumpToPlace(place)
+                } label: {
+                    Label("查看「\(place.name)」", systemImage: "mappin.and.ellipse")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: maxWidth)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.thinMaterial)
+                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(color.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    @MainActor
+    private func loadPlaceType(for placeId: Int?) async {
+        guard let placeId else { return }
+        if let place = placeLookup[placeId] {
+            placeType = place.type
+            return
+        }
+        if let place = await PlacesManager.shared.fetchPlace(id: placeId) {
+            placeType = place.type
+        }
+    }
+
+    @MainActor
+    private func reactAndAdvance(_ reaction: String) async {
+        guard let log = current else { return }
+        let direction: CGFloat = (reaction == "like") ? 1 : -1
+
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            dragOffset = CGSize(width: direction * 900, height: 0)
+        }
+
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        await MainActor.run {
+            let nextPlaceId = queue.dropFirst().first?.placeServerId
+            advanceQueue()
+            dragOffset = .zero
+            if let pid = nextPlaceId {
+                Task { await loadPlaceType(for: pid) }
+            }
+        }
+
+        Task {
+            let updated = await PostsManager.shared.react(postId: log.serverId, reaction: reaction) ?? log
+            await MainActor.run {
+                updateCaches(with: updated)
+            }
+        }
+    }
+
+    @MainActor
+    private func advanceQueue() {
+        guard !queue.isEmpty else { dismiss(); return }
+        queue.removeFirst()
+        if let next = queue.first {
+            current = next
+            placeServerId = next.placeServerId
+        } else {
+            dismiss()
+        }
+    }
+
+    @MainActor
+    private func updateCaches(with updated: LogItem) {
+        if let idx = queue.firstIndex(where: { $0.serverId == updated.serverId }) {
+            queue[idx] = updated
+        }
+        if current?.serverId == updated.serverId {
+            current = updated
+        }
+
+        var logs = vm.logsByPlace[updated.placeServerId] ?? []
+        if let i = logs.firstIndex(where: { $0.serverId == updated.serverId }) {
+            logs[i] = updated
+            vm.logsByPlace[updated.placeServerId] = logs
+        }
+
+        var my = vm.myPosts
+        if let j = my.firstIndex(where: { $0.serverId == updated.serverId }) {
+            my[j] = updated
+        }
+        vm.myPosts = my
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let now = Date()
+        let comps = Calendar.current.dateComponents([.day, .hour, .minute], from: date, to: now)
+        if comps.minute ?? 0 < 1 && comps.hour ?? 0 == 0 && comps.day ?? 0 == 0 {
+            return "剛剛"
+        }
+        if comps.hour ?? 0 < 1 && comps.day ?? 0 == 0 {
+            return "\(comps.minute ?? 0) 分鐘前"
+        }
+        if comps.day ?? 0 < 1 {
+            return "\(comps.hour ?? 0) 小時前"
+        }
+        if comps.day ?? 0 < 7 {
+            return "\(comps.day ?? 0) 天前"
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "zh_TW")
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Tag pills
+
+private struct TagPills: View {
+    let tags: [String]
+    let tint: Color
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.caption)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(tint.opacity(0.15))
+                        .foregroundStyle(tint)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(tint.opacity(0.45), lineWidth: 1))
+                }
+            }
         }
     }
 }
@@ -716,4 +1120,3 @@ struct NearbySheet: View {
         }
     }
 }
-

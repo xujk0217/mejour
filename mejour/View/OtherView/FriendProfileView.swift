@@ -220,6 +220,7 @@ struct FriendProfileView: View {
                         ForEach(friendPosts) { post in
                             NavigationLink {
                                 LogDetailView(postId: post.serverId)
+                                    .environmentObject(vm)
                             } label: {
                                 postRow(post)
                             }
