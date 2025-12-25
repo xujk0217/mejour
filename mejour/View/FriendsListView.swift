@@ -79,6 +79,9 @@ struct FriendsListView: View {
                     Button("完成") { dismiss() }
                 }
             }
+            .task {
+                await follow.refreshDisplayNamesIfNeeded()
+            }
         }
     }
     

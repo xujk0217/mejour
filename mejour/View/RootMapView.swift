@@ -41,12 +41,12 @@ struct RootMapView: View {
     @State private var searchText: String = ""
     @FocusState private var isSearchFocused: Bool
     
-    // friend-place selector
+    // 好友地點選擇器狀態
     @State private var friendSelectPlace: Place? = nil
     @State private var friendSelectFriends: [Friend] = []
     @State private var isShowingFriendSelector: Bool = false
     
-    // 隨機貼文
+    // 隨機貼文資料
     @State private var randomPosts: [LogItem] = []
     @State private var randomPlaceLookup: [Int: Place] = [:]
     @State private var isLoadingRandom = false
@@ -59,20 +59,20 @@ struct RootMapView: View {
 
     var body: some View {
         ZStack {
-            // 如果已登入，顯示地圖
+            // 只有登入後才顯示地圖
             if auth.isAuthenticated {
                 TabView(selection: $selectedTab) {
-                    // Tab 1: 個人
+                    // 個人分頁
                     mapContent(scope: .mine)
                         .tabItem { Label("個人", systemImage: "person.crop.circle") }
                         .tag(MapTab.mine.rawValue)
 
-                    // Tab 2: 朋友（目前行為與社群相同）
+                    // 朋友分頁（目前同社群資料）
                     mapContent(scope: .community)
                         .tabItem { Label("朋友", systemImage: "person.2") }
                         .tag(MapTab.friends.rawValue)
 
-                    // Tab 3: 社群（目前行為與社群相同）
+                    // 社群分頁
                     mapContent(scope: .community)
                         .tabItem { Label("社群", systemImage: "person.3") }
                         .tag(MapTab.everyone.rawValue)
@@ -169,13 +169,13 @@ struct RootMapView: View {
                     }
                 }
             } else {
-                // 未登入：顯示登入頁面
+                // 未登入時顯示登入畫面
                 LoginOverlayView(auth: auth)
             }
         }
     }
 
-    // MARK: - 地圖內容（兩個 Tab 共用，同一份 UI，只換 scope）
+    // MARK: - 地圖內容（共用 UI，依 scope 切換）
     private func mapContent(scope: MapScope) -> some View {
         ZStack(alignment: .center) {
             Map(position: $vm.cameraPosition, selection: $vm.selectedPlace) {
@@ -187,7 +187,7 @@ struct RootMapView: View {
                     }
                 }
                 if selectedTab == MapTab.friends.rawValue {
-                    // For friend tab: show friend's avatar at places they've posted
+                    // 朋友分頁：在好友發過文的地點放頭像
                     let pairs: [(place: Place, friend: Friend)] = {
                         var out: [(Place, Friend)] = []
                         let allPlaces = vm.communityPlaces + vm.myPlaces
@@ -210,7 +210,7 @@ struct RootMapView: View {
                             let friends = group.map { $0.friend }
                             Annotation("\(place.name)-\(pid)", coordinate: place.coordinate.cl) {
                                 ZStack {
-                                    // stacked avatars (up to 3) with offsets
+                                    // 最多顯示三個頭像並稍微錯位
                                     HStack(spacing: -8) {
                                         ForEach(Array(friends.prefix(3)).indices, id: \.self) { i in
                                             let f = friends[i]
@@ -265,7 +265,7 @@ struct RootMapView: View {
                 vm.cameraCenter = ctx.region.center
             }
             
-            // 登入與載入狀態指示器（浮動卡片，中心放大）
+            // 登入或載入時的浮動提示卡片
             let shouldShowPlacesLoading = vm.isLoadingPlaces && !didFinishInitialPlacesLoad
             if auth.isLoading || shouldShowPlacesLoading || isLoadingRandom {
                 VStack(spacing: 16) {
@@ -298,10 +298,10 @@ struct RootMapView: View {
             }
 
             if !vm.isLoadingPlaces && !auth.isLoading {
-                // 頂部工具列：左加號、中搜尋、右個人 + 搜尋結果列表
+                // 上方工具列與搜尋結果區塊
                 VStack(spacing: 0) {
                     HStack(spacing: 12) {
-                        // 左：根據 tab 顯示不同按鈕（個人=加號、朋友=好友列表、社群=空白占位）
+                        // 左側按鈕依分頁切換（個人=加號、朋友=好友列表、社群=空白）
                         if selectedTab == MapTab.mine.rawValue {
                             Button {
                                 activeSheet = .addLog
@@ -343,12 +343,12 @@ struct RootMapView: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                         } else {
-                            // 社群：保留空位，不顯示圈圈
+                            // 社群分頁只占位，不顯示按鈕
                             Color.clear
                                 .frame(width: 40, height: 40)
                         }
 
-                        // 中：搜尋條
+                        // 搜尋輸入
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 14, weight: .semibold))
@@ -362,7 +362,7 @@ struct RootMapView: View {
                         .background(.ultraThinMaterial, in: Capsule())
                         .overlay(Capsule().stroke(.white.opacity(0.25)))
 
-                        // 右：個人頁面按鈕
+                        // 個人頁按鈕
                         Button {
                             activeSheet = .profile
                         } label: {
@@ -377,7 +377,7 @@ struct RootMapView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
 
-                    // 搜尋結果列表
+                    // 搜尋結果
                     if isSearchFocused || !searchText.isEmpty {
                         ScrollView(.vertical) {
                             VStack(spacing: 6) {
@@ -426,7 +426,7 @@ struct RootMapView: View {
                 .frame(maxWidth: .infinity)
                 .frame(maxHeight: .infinity, alignment: .topLeading)
 
-            // friend selector dialog when multiple friends share the same place
+            // 多位好友在同一地點時的選擇彈窗
             .confirmationDialog("查看哪位好友的貼文？", isPresented: $isShowingFriendSelector, titleVisibility: .visible) {
                 if let place = friendSelectPlace {
                     ForEach(friendSelectFriends, id: \.userId) { f in
@@ -441,7 +441,7 @@ struct RootMapView: View {
                 }
             }
 
-                // 右下角定位按鈕
+                // 定位按鈕
                 VStack(spacing: 10) {
                     Button {
                         if let me = vm.userCoordinate {
@@ -482,7 +482,7 @@ struct RootMapView: View {
         }
     }
 
-    // MARK: - Background polling
+    // MARK: - 背景輪詢
 
     private func pollPlacesPeriodically() async {
         while auth.isAuthenticated && !Task.isCancelled {
@@ -491,7 +491,7 @@ struct RootMapView: View {
         }
     }
 
-    // MARK: - Random posts (直接開滑卡)
+    // MARK: - 隨機貼文
 
     @MainActor
     private func loadRandomPosts() async {
@@ -537,7 +537,7 @@ struct RootMapView: View {
     }
 }
 
-// MARK: - Random detail (滑動隨機貼文)
+// MARK: - 隨機貼文詳情
 
 private struct RandomLogDetailView: View {
     let posts: [LogItem]
@@ -624,7 +624,7 @@ private struct RandomLogDetailView: View {
             }
         }
         .onAppear {
-            // 以 startIndex 為起點的循環隊列
+            // 以 startIndex 為起點建立循環序列
             let leading = Array(posts[startIndex...])
             let trailing = Array(posts.prefix(startIndex))
             queue = leading + trailing
@@ -830,7 +830,7 @@ private struct RandomLogDetailView: View {
     }
 }
 
-// MARK: - Tag pills
+// MARK: - 標籤膠囊
 
 private struct TagPills: View {
     let tags: [String]
@@ -854,7 +854,7 @@ private struct TagPills: View {
     }
 }
 
-// 不再使用 .bordered / .borderedProminent，統一自訂外觀
+// 不用系統 .bordered/.borderedProminent，統一自訂外觀
 private struct GlassButtonCompat: ViewModifier {
     var prominent: Bool = false
     func body(content: Content) -> some View {
@@ -868,7 +868,7 @@ private struct GlassButtonCompat: ViewModifier {
 }
 
 
-// MARK: - 自訂底部 Bar（Deliquified Glass）
+// MARK: - 自訂底部 Bar
 
 private struct DeliquifiedGlassBar: View {
     @Binding var selection: MapScope
@@ -878,7 +878,7 @@ private struct DeliquifiedGlassBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // 左：雙分頁 capsule
+            // 左邊的雙分頁按鈕
             HStack(spacing: 0) {
                 CapsuleTabButton(
                     title: "個人",
@@ -911,7 +911,7 @@ private struct DeliquifiedGlassBar: View {
             .compositingGroup()
             .shadow(color: .black.opacity(0.15), radius: 10, y: 6)
 
-            // 右：大圓「＋」
+            // 右側新增按鈕
             Button(action: onAdd) {
                 Image(systemName: "plus")
                     .font(.system(size: 20, weight: .bold))
@@ -927,7 +927,7 @@ private struct DeliquifiedGlassBar: View {
     }
 }
 
-// 一層可重用的液態玻璃動畫：mesh 斑點 + 高光掃描
+// 可重用的液態玻璃動畫層
 private struct GlassLiquidLayer: View {
     let shape: AnyShape
 
@@ -957,7 +957,7 @@ private struct AnyShape: Shape {
     func path(in rect: CGRect) -> Path { _path(rect) }
 }
 
-// 流動光斑
+// 流動光斑層
 private struct LiquidGlowOverlay: View {
     var intensity: Double = 0.5
     var speed: Double = 0.2
@@ -1000,7 +1000,7 @@ private struct LiquidGlowOverlay: View {
     }
 }
 
-// 高光掃過
+// 高光掃描
 private struct ShimmerSweep: View {
     var opacity: Double = 0.4
     var duration: Double = 4.0
@@ -1056,7 +1056,7 @@ private struct CapsuleTabButton: View {
     }
 }
 
-// MARK: - 浮動圓形按鈕樣式 / 我的藍點
+// MARK: - 浮動按鈕與定位圖示
 
 private struct CircleButtonIcon: View {
     let systemName: String
@@ -1099,7 +1099,7 @@ private struct Triangle: Shape {
     }
 }
 
-// NearbySheet.swift
+// MARK: - NearbySheet
 struct NearbySheet: View {
     @ObservedObject var vm: MapViewModel
     let baseCoord: CLLocationCoordinate2D?
@@ -1133,7 +1133,7 @@ struct NearbySheet: View {
                         if let c = baseCoord {
                             let nearby = vm.nearestPlaces(
                                 from: c,
-                                source: source,                 // ← 依目前分頁（我的/社群）
+                                source: source,                 // 依目前分頁（我的/社群）
                                 limit: 50,
                                 tagFilter: tagFilter,
                                 radiusMeters: .greatestFiniteMagnitude

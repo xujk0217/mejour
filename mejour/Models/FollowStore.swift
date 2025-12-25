@@ -55,6 +55,42 @@ final class FollowStore: ObservableObject {
     
     var ids: [Int] { friends.map(\.userId) }
 
+    /// 重新拉取缺少的 display name（需已登入）
+    func refreshDisplayNamesIfNeeded() async {
+        guard let token = AuthManager.shared.accessToken, !token.isEmpty else { return }
+        let base = URL(string: "https://meejing-backend.vercel.app")!
+
+        var updated = friends
+        var changed = false
+
+        for idx in updated.indices {
+            let friend = updated[idx]
+            if let name = friend.displayName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            }
+
+            var req = URLRequest(url: base.appendingPathComponent("/api/users/\(friend.userId)/"))
+            req.httpMethod = "GET"
+            req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                   let user = try? JSONDecoder().decode(APIUserBrief.self, from: data) {
+                    updated[idx].displayName = user.displayName
+                    changed = true
+                }
+            } catch {
+                continue
+            }
+        }
+
+        if changed {
+            friends = updated
+            persist()
+        }
+    }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(friends) {
             UserDefaults.standard.set(data, forKey: key)
