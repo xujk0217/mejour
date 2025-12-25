@@ -23,10 +23,16 @@ enum PlaceSheetMode: Equatable {
 struct PlaceSheetView: View {
     let place: Place
     let mode: PlaceSheetMode
+    let detentSelection: Binding<PresentationDetent>?
 
-    init(place: Place, mode: PlaceSheetMode = .normal) {
+    init(
+        place: Place,
+        mode: PlaceSheetMode = .normal,
+        detentSelection: Binding<PresentationDetent>? = nil
+    ) {
         self.place = place
         self.mode = mode
+        self.detentSelection = detentSelection
     }
 
     @EnvironmentObject private var vm: MapViewModel
@@ -196,6 +202,9 @@ struct PlaceSheetView: View {
             .frame(height: 130, alignment: .center)
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded {
+            detentSelection?.wrappedValue = .large
+        })
     }
 
     @ViewBuilder

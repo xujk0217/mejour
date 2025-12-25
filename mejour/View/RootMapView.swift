@@ -51,6 +51,7 @@ struct RootMapView: View {
     @State private var randomPlaceLookup: [Int: Place] = [:]
     @State private var isLoadingRandom = false
     @State private var randomError: String?
+    @State private var placeSheetDetent: PresentationDetent = .medium
 
     @SceneStorage("selectedMapTab") private var selectedTab: Int = MapTab.mine.rawValue
 
@@ -79,13 +80,14 @@ struct RootMapView: View {
                     case .place(let place):
                         PlaceSheetView(
                             place: place,
-                            mode: (vm.scope == .mine) ? .onlyMine : .normal
+                            mode: (vm.scope == .mine) ? .onlyMine : .normal,
+                            detentSelection: $placeSheetDetent
                         )
                         .environmentObject(vm)
-                        .presentationDetents(Set([.medium, .large]))
+                        .presentationDetents([.medium, .large], selection: $placeSheetDetent)
                     case .addLog:
                         AddLogWizard(vm: vm)
-                            .presentationDetents(Set([.large]))
+                        .presentationDetents(Set([.large]))
                     case .profile: // 個人頁面
                         ProfileSheetView()
                             .environmentObject(vm)
@@ -95,9 +97,13 @@ struct RootMapView: View {
                             .environmentObject(vm)
                             .presentationDetents(Set([.large]))
                     case .friendPlace(let place, let userId):
-                        PlaceSheetView(place: place, mode: .onlyUser(userId: userId))
+                        PlaceSheetView(
+                            place: place,
+                            mode: .onlyUser(userId: userId),
+                            detentSelection: $placeSheetDetent
+                        )
                             .environmentObject(vm)
-                            .presentationDetents(Set([.medium, .large]))
+                            .presentationDetents([.medium, .large], selection: $placeSheetDetent)
                     case .randomFeed(let start):
                         NavigationStack {
                             RandomLogDetailView(
@@ -116,6 +122,14 @@ struct RootMapView: View {
                 .onChange(of: selectedTab) { newValue in
                     vm.scope = (newValue == MapTab.mine.rawValue) ? .mine : .community
                 }
+                .onChange(of: activeSheet) { which in
+                    switch which {
+                    case .place, .friendPlace:
+                        placeSheetDetent = .medium
+                    default:
+                        break
+                    }
+                }
                 .onChange(of: auth.isAuthenticated) { authed in
                     if !authed {
                         vm.resetForLogout()
@@ -127,6 +141,14 @@ struct RootMapView: View {
                     vm.scope = (selectedTab == MapTab.mine.rawValue) ? .mine : .community
                     vm.loadData(in: nil)
                     await vm.loadFollowedUsersPosts()
+                    if auth.isAuthenticated {
+                        Task { await pollPlacesPeriodically() }
+                    }
+                }
+                .onChange(of: auth.isAuthenticated) { authed in
+                    if authed {
+                        Task { await pollPlacesPeriodically() }
+                    }
                 }
                 .onChange(of: selectedTab) { _ in
                     if selectedTab == MapTab.friends.rawValue {
@@ -442,6 +464,15 @@ struct RootMapView: View {
         }
     }
 
+    // MARK: - Background polling
+
+    private func pollPlacesPeriodically() async {
+        while auth.isAuthenticated && !Task.isCancelled {
+            await vm.loadPlacesFromAPI()
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+        }
+    }
+
     // MARK: - Random posts (直接開滑卡)
 
     @MainActor
@@ -704,7 +735,7 @@ private struct RandomLogDetailView: View {
             dragOffset = CGSize(width: direction * 900, height: 0)
         }
 
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        try? await Task.sleep(nanoseconds: 400_000_000)
         await MainActor.run {
             let nextPlaceId = queue.dropFirst().first?.placeServerId
             advanceQueue()
