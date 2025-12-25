@@ -629,18 +629,20 @@ private struct RandomLogDetailView: View {
         let parsed = PostContent.parse(log.content)
         let tags = parsed.tags
         let color = place?.type.color ?? placeType.color
-        let maxWidth: CGFloat = min(UIScreen.main.bounds.width - 32, 500)
+        let screenWidth = UIScreen.main.bounds.width
+        let maxWidth: CGFloat = min(screenWidth * 0.9, 520)
         let hasPhoto = !(log.photoURL ?? "").isEmpty
-        let photoHeight: CGFloat = 260
-        let contentHeight: CGFloat = 200 + (hasPhoto ? 0 : photoHeight)
+        let photoHeight: CGFloat = max(min(maxWidth * 0.6, 320), 200)
+        let contentHeight: CGFloat = max(min(maxWidth * 0.5, 260), 180) + (hasPhoto ? 0 : photoHeight)
 
         return VStack(alignment: .leading, spacing: 12) {
             Text(log.title)
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            
-            Text(formatDate(log.createdAt))
+
+            let displayDate = parsed.photoTakenTime ?? log.createdAt
+            Text(formatDate(displayDate))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

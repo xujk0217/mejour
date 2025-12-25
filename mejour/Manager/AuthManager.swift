@@ -29,7 +29,7 @@ final class AuthManager: ObservableObject {
     
     /// 用預設帳號登入（先這樣寫死，之後再接 UI）
     func loginDefaultUser() async {
-        await login(username: "xujk", password: "xujk0217")
+        await login(username: "test", password: "12345678")
     }
     
     /// 一般登入（之後如果有登入頁面可以直接重用）

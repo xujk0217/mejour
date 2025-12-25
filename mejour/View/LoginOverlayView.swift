@@ -5,8 +5,8 @@ struct LoginOverlayView: View {
     @ObservedObject var auth: AuthManager
     
     @State private var showingRegister = false
-    @State private var username: String = "xujk"
-    @State private var password: String = "xujk0217"
+    @State private var username: String = "test"
+    @State private var password: String = "12345678"
     @State private var email: String = ""
     @State private var displayName: String = ""
     @State private var errorMessage: String = ""

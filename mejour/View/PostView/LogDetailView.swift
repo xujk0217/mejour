@@ -110,10 +110,11 @@ struct LogDetailView: View {
         let parsed = PostContent.parse(log.content)
         let tags = parsed.tags
         let color = placeType.color
-        let maxWidth: CGFloat = min(UIScreen.main.bounds.width - 32, 500)
+        let screenWidth = UIScreen.main.bounds.width
+        let cardWidth: CGFloat = min(screenWidth * 0.9, 520)
         let hasPhoto = !(log.photoURL ?? "").isEmpty
-        let photoHeight: CGFloat = 260
-        let contentHeight: CGFloat = 200 + (hasPhoto ? 0 : photoHeight)
+        let photoHeight: CGFloat = max(min(cardWidth * 0.6, 320), 200)
+        let contentHeight: CGFloat = max(min(cardWidth * 0.5, 260), 180) + (hasPhoto ? 0 : photoHeight)
         
         return VStack(alignment: .leading, spacing: 12) {
             Text(log.title)
@@ -121,7 +122,8 @@ struct LogDetailView: View {
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
-            Text(formatDate(log.createdAt))
+            let displayDate = PostContent.parse(log.content).photoTakenTime ?? log.createdAt
+            Text(formatDate(displayDate))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -131,14 +133,14 @@ struct LogDetailView: View {
                     image
                         .resizable()
                         .scaledToFill()
-                        .frame(maxWidth: maxWidth)
-                        .frame(maxHeight: photoHeight)
+                        .frame(maxWidth: cardWidth)
+                        .frame(height: photoHeight)
                         .clipped()
                 } placeholder: {
                     RoundedRectangle(cornerRadius: 14)
                         .fill(.thinMaterial)
-                        .frame(maxWidth: maxWidth)
-                        .frame(maxHeight: photoHeight)
+                        .frame(maxWidth: cardWidth)
+                        .frame(height: photoHeight)
                         .overlay(ProgressView())
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -172,7 +174,7 @@ struct LogDetailView: View {
             .background(.background, in: RoundedRectangle(cornerRadius: 14))
         }
             .padding(14)
-        .frame(maxWidth: maxWidth)
+        .frame(maxWidth: cardWidth)
         .background(
             RoundedRectangle(cornerRadius: 18)
                 .fill(.thinMaterial)
