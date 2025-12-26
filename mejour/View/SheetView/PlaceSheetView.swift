@@ -138,6 +138,7 @@ struct PlaceSheetView: View {
         let parsed = PostContent.parse(log.content)
         let tags = parsed.tags
         let typeColor = place.type.color
+        let displayDate = parsed.photoTakenTime ?? log.createdAt
 
         return NavigationLink {
             LogDetailView(postId: log.serverId)
@@ -150,10 +151,15 @@ struct PlaceSheetView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
-                        Text(log.title)
-                            .font(.headline)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(log.title)
+                                .font(.headline)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Text(formatDate(displayDate))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
 
                         Spacer()
 

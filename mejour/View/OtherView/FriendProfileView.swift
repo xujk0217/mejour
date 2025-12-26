@@ -237,7 +237,7 @@ struct FriendProfileView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(log.title).font(.headline)
 
-            Text(log.content)
+            Text(log.displayContent)
                 .lineLimit(2)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

@@ -46,17 +46,12 @@ final class PlacesManager: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let page: APIPaginated<APIPlace> = try await authedRequest(
-                path: "/api/map/places/",
-                method: "GET",
-                body: nil
-            )
-
-            let mapped: [Place] = page.results.compactMap { Place(api: $0) }
+            let apiPlaces = try await fetchAllPlaces()
+            let mapped: [Place] = apiPlaces.compactMap { Place(api: $0) }
 
             // 如果有 mapping 掉資料，至少讓你知道（避免默默少點）
-            if mapped.count != page.results.count {
-                let dropped = page.results.count - mapped.count
+            if mapped.count != apiPlaces.count {
+                let dropped = apiPlaces.count - mapped.count
                 throw APIError.mappingFailed("Dropped \(dropped) place(s) due to UUID/lat/lon parsing.")
             }
 
@@ -143,11 +138,21 @@ final class PlacesManager: ObservableObject {
         method: String,
         body: Data?
     ) async throws -> T {
+        let url = baseURL.appendingPathComponent(path)
+        let data = try await authedRequestRaw(url: url, method: method, body: body)
+
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decodeFailed
+        }
+    }
+
+    private func authedRequestRaw(url: URL, method: String, body: Data?) async throws -> Data {
         guard let access = AuthManager.shared.accessToken, !access.isEmpty else {
             throw APIError.missingAccessToken
         }
 
-        let url = baseURL.appendingPathComponent(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.addValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
@@ -165,12 +170,36 @@ final class PlacesManager: ObservableObject {
             let bodyText = String(data: data, encoding: .utf8) ?? ""
             throw APIError.httpStatus(http.statusCode, bodyText)
         }
+        return data
+    }
 
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw APIError.decodeFailed
+    private func fetchAllPlaces() async throws -> [APIPlace] {
+        var results: [APIPlace] = []
+        var nextURL: URL? = baseURL.appendingPathComponent("/api/map/places/")
+
+        while let url = nextURL {
+            let data = try await authedRequestRaw(url: url, method: "GET", body: nil)
+
+            if let page = try? JSONDecoder().decode(APIPaginated<APIPlace>.self, from: data) {
+                results.append(contentsOf: page.results)
+                if let next = page.next,
+                   let resolved = URL(string: next) ?? URL(string: next, relativeTo: baseURL) {
+                    nextURL = resolved
+                } else {
+                    nextURL = nil
+                }
+            } else if let arr = try? JSONDecoder().decode([APIPlace].self, from: data) {
+                results.append(contentsOf: arr)
+                nextURL = nil
+            } else if let single = try? JSONDecoder().decode(APIPlace.self, from: data) {
+                results.append(single)
+                nextURL = nil
+            } else {
+                throw APIError.decodeFailed
+            }
         }
+
+        return results
     }
     
     /// 測試用：直接傳 metadata(JSON字串)

@@ -149,7 +149,7 @@ struct FriendProfileSheetView: View {
     private func postRow(_ log: LogItem) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(log.title).font(.headline)
-            Text(log.content)
+            Text(log.displayContent)
                 .lineLimit(2)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

@@ -105,13 +105,7 @@ final class PostsManager: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let data: Data = try await authedRequestRaw(
-                path: "/api/map/posts/by-place/\(placeId)/",
-                method: "GET",
-                contentType: nil,
-                body: nil
-            )
-            let apis = try decodeObjectOrArray(APIPost.self, from: data)
+            let apis = try await fetchPaginatedPosts(path: "/api/map/posts/by-place/\(placeId)/")
             let mapped = apis.compactMap(LogItem.init(api:))
             return mapped
         } catch {
@@ -134,12 +128,7 @@ final class PostsManager: ObservableObject {
         }
 
         do {
-            let apis: [APIPost] = try await authedRequest(
-                path: "/api/map/posts/by-user/\(userId)/",
-                method: "GET",
-                contentType: nil,
-                body: nil
-            )
+            let apis = try await fetchPaginatedPosts(path: "/api/map/posts/by-user/\(userId)/")
             let mapped = apis.compactMap(LogItem.init(api:))
             cachedPostsByUser[userId] = (posts: mapped, fetchedAt: Date())
             return mapped
@@ -241,11 +230,20 @@ final class PostsManager: ObservableObject {
         contentType: String?,
         body: Data?
     ) async throws -> Data {
+        let url = baseURL.appendingPathComponent(path)
+        return try await authedRequestRaw(url: url, method: method, contentType: contentType, body: body)
+    }
+
+    private func authedRequestRaw(
+        url: URL,
+        method: String,
+        contentType: String?,
+        body: Data?
+    ) async throws -> Data {
         guard let access = AuthManager.shared.accessToken, !access.isEmpty else {
             throw APIError.missingAccessToken
         }
 
-        let url = baseURL.appendingPathComponent(path)
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.addValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
@@ -271,5 +269,30 @@ final class PostsManager: ObservableObject {
         }
         let obj = try JSONDecoder().decode(T.self, from: data)
         return [obj]
+    }
+
+    private func fetchPaginatedPosts(path: String) async throws -> [APIPost] {
+        var collected: [APIPost] = []
+        var nextURL: URL? = baseURL.appendingPathComponent(path)
+
+        while let url = nextURL {
+            let data = try await authedRequestRaw(url: url, method: "GET", contentType: nil, body: nil)
+
+            if let page = try? JSONDecoder().decode(APIPaginated<APIPost>.self, from: data) {
+                collected.append(contentsOf: page.results)
+                if let next = page.next,
+                   let resolved = URL(string: next) ?? URL(string: next, relativeTo: baseURL) {
+                    nextURL = resolved
+                } else {
+                    nextURL = nil
+                }
+            } else {
+                let apis = try decodeObjectOrArray(APIPost.self, from: data)
+                collected.append(contentsOf: apis)
+                nextURL = nil
+            }
+        }
+
+        return collected
     }
 }
